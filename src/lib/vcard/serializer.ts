@@ -59,19 +59,19 @@ export function serializeVcf(document: VCardDocument): string {
   }
 
   for (const email of document.emails.filter((value) => hasMeaningfulValue(value.value))) {
-    lines.push(serializeContactProperty("EMAIL", email, document.version));
+    lines.push(...serializeContactProperties("EMAIL", email, document.version));
   }
 
   for (const phone of document.phones.filter((value) => hasMeaningfulValue(value.value))) {
-    lines.push(serializeContactProperty("TEL", phone, document.version));
+    lines.push(...serializeContactProperties("TEL", phone, document.version));
   }
 
   for (const url of document.urls.filter((value) => hasMeaningfulValue(value.value))) {
-    lines.push(serializeContactProperty("URL", url, document.version));
+    lines.push(...serializeContactProperties("URL", url, document.version));
   }
 
   for (const address of document.addresses.filter(hasAddressValue)) {
-    lines.push(serializeAddressProperty(address, document.version));
+    lines.push(...serializeAddressProperties(address, document.version));
   }
 
   if (hasMeaningfulValue(document.note)) {
@@ -102,13 +102,40 @@ function hasAddressValue(address: AddressValue): boolean {
   ].some(hasMeaningfulValue);
 }
 
-function serializeContactProperty(name: string, value: ContactValue, version: VCardDocument["version"]) {
-  const params = buildEntryParameters(value, version);
-  return serializeProperty(name, escapeText(value.value), params, value.group);
+function serializeContactProperties(
+  name: string,
+  value: ContactValue,
+  version: VCardDocument["version"],
+): string[] {
+  const useAppleGroupedLabel = shouldUseAppleGroupedLabel(value);
+  const params = buildEntryParameters(
+    {
+      ...value,
+      label: useAppleGroupedLabel ? undefined : value.label,
+    },
+    version,
+  );
+  const lines = [serializeProperty(name, escapeText(value.value), params, value.group)];
+
+  if (useAppleGroupedLabel) {
+    lines.push(serializeProperty("X-ABLabel", escapeText(value.label ?? ""), [], value.group));
+  }
+
+  return lines;
 }
 
-function serializeAddressProperty(value: AddressValue, version: VCardDocument["version"]) {
-  const params = buildEntryParameters(value, version);
+function serializeAddressProperties(
+  value: AddressValue,
+  version: VCardDocument["version"],
+): string[] {
+  const useAppleGroupedLabel = shouldUseAppleGroupedLabel(value);
+  const params = buildEntryParameters(
+    {
+      ...value,
+      label: useAppleGroupedLabel ? undefined : value.label,
+    },
+    version,
+  );
   const addressValue = [
     value.poBox,
     value.extended,
@@ -121,7 +148,13 @@ function serializeAddressProperty(value: AddressValue, version: VCardDocument["v
     .map(escapeText)
     .join(";");
 
-  return serializeProperty("ADR", addressValue, params, value.group);
+  const lines = [serializeProperty("ADR", addressValue, params, value.group)];
+
+  if (useAppleGroupedLabel) {
+    lines.push(serializeProperty("X-ABLabel", escapeText(value.label ?? ""), [], value.group));
+  }
+
+  return lines;
 }
 
 function serializePhotoProperty(value: PhotoValue, version: VCardDocument["version"]) {
@@ -184,6 +217,10 @@ function buildEntryParameters(
   }
 
   return params;
+}
+
+function shouldUseAppleGroupedLabel(value: Pick<ContactValue, "group" | "label">): boolean {
+  return Boolean(value.group && hasMeaningfulValue(value.label ?? ""));
 }
 
 function serializeUnknownProperty(property: UnknownProperty): string {

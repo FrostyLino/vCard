@@ -4,7 +4,7 @@ import { parseVcf } from "./parser";
 import { serializeVcf } from "./serializer";
 
 describe("parseVcf", () => {
-  it("parses a vCard 3.0 file and keeps grouped unknown properties", () => {
+  it("maps Apple grouped labels onto entries and serializes them back compatibly", () => {
     const source = [
       "BEGIN:VCARD",
       "VERSION:3.0",
@@ -12,21 +12,30 @@ describe("parseVcf", () => {
       "N:Doe;Jane;;;",
       "item1.EMAIL;TYPE=INTERNET,WORK;TYPE=PREF:jane@example.com",
       "item1.X-ABLabel:Work",
+      "item2.ADR;TYPE=HOME:;;Street 1;Berlin;;;Germany",
+      "item2.X-ABLabel:Home Base",
       "NOTE:Line one\\nLine two",
       "END:VCARD",
       "",
     ].join("\r\n");
 
     const result = parseVcf(source);
+    const serialized = serializeVcf(result.document);
 
     expect(result.document.version).toBe("3.0");
     expect(result.document.formattedName).toBe("Jane Doe");
     expect(result.document.emails).toHaveLength(1);
     expect(result.document.emails[0].group).toBe("item1");
     expect(result.document.emails[0].pref).toBe(1);
-    expect(result.document.unknownProperties).toHaveLength(1);
-    expect(serializeVcf(result.document)).toContain("item1.EMAIL;TYPE=PREF,INTERNET,WORK:jane@example.com");
-    expect(serializeVcf(result.document)).toContain("item1.X-ABLabel:Work");
+    expect(result.document.emails[0].label).toBe("Work");
+    expect(result.document.addresses[0].group).toBe("item2");
+    expect(result.document.addresses[0].label).toBe("Home Base");
+    expect(result.document.unknownProperties).toHaveLength(0);
+    expect(serialized).toContain("item1.EMAIL;TYPE=PREF,INTERNET,WORK:jane@example.com");
+    expect(serialized).toContain("item1.X-ABLabel:Work");
+    expect(serialized).toContain("item2.ADR;TYPE=HOME:;;Street 1;Berlin;;;Germany");
+    expect(serialized).toContain("item2.X-ABLabel:Home Base");
+    expect(serialized).not.toContain("LABEL=");
   });
 
   it("unfolds folded lines and roundtrips important data", () => {

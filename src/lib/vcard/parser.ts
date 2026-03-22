@@ -72,6 +72,7 @@ export function parseVcf(source: string): ParseResult {
   const version = normalizeVersion(versionLine.value);
   const document = createEmptyDocument(version);
   const warnings: string[] = [];
+  const groupedAppleLabels: ParsedLine[] = [];
 
   for (const line of bodyLines) {
     if (line.name === "VERSION") {
@@ -99,6 +100,11 @@ export function parseVcf(source: string): ParseResult {
     if (!normalizedLine || hasUnsupportedEncoding(normalizedLine)) {
       document.unknownProperties.push(toUnknownProperty(line));
       warnings.push(`${line.name} uses unsupported encoding parameters and was preserved as raw data.`);
+      continue;
+    }
+
+    if (normalizedLine.name === "X-ABLABEL" && normalizedLine.group) {
+      groupedAppleLabels.push(normalizedLine);
       continue;
     }
 
@@ -171,6 +177,25 @@ export function parseVcf(source: string): ParseResult {
       default: {
         document.unknownProperties.push(toUnknownProperty(normalizedLine));
       }
+    }
+  }
+
+  for (const appleLabelLine of groupedAppleLabels) {
+    const matchCount = applyGroupedAppleLabel(
+      document,
+      appleLabelLine.group ?? "",
+      unescapeText(appleLabelLine.value),
+    );
+
+    if (matchCount === 0) {
+      document.unknownProperties.push(toUnknownProperty(appleLabelLine));
+      continue;
+    }
+
+    if (matchCount > 1) {
+      warnings.push(
+        `Apple grouped label ${appleLabelLine.group} matched multiple entries. The same label was applied to each of them.`,
+      );
     }
   }
 
@@ -442,6 +467,28 @@ function findParameterValues(params: VCardParameter[], key: string): string[] {
   return params
     .filter((param) => (param.key?.toUpperCase() ?? "TYPE") === key)
     .flatMap((param) => param.values.map((value) => value.trim()));
+}
+
+function applyGroupedAppleLabel(document: VCardDocument, group: string, label: string): number {
+  let matchCount = 0;
+
+  const applyLabel = (entries: Array<ContactValue | AddressValue>) => {
+    for (const entry of entries) {
+      if (entry.group !== group) {
+        continue;
+      }
+
+      entry.label = label;
+      matchCount += 1;
+    }
+  };
+
+  applyLabel(document.emails);
+  applyLabel(document.phones);
+  applyLabel(document.urls);
+  applyLabel(document.addresses);
+
+  return matchCount;
 }
 
 function normalizeKnownEncoding(line: ParsedLine): ParsedLine | null {

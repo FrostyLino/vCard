@@ -28,8 +28,9 @@ describe("serializeVcf", () => {
     const serialized = unfoldVCardLines(serializeVcf(document)).join("\n");
 
     expect(serialized).toContain(
-      'item1.EMAIL;TYPE=WORK,HOME;PREF=2;LABEL="Main \\"VIP\\" line";X-ABLABEL=Office:jane@example.com',
+      'item1.EMAIL;TYPE=WORK,HOME;PREF=2;X-ABLABEL=Office:jane@example.com',
     );
+    expect(serialized).toContain('item1.X-ABLabel:Main "VIP" line');
   });
 
   it("uses vCard-3.0 conventions for pref flags and photo URIs", () => {
