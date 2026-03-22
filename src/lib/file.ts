@@ -19,6 +19,40 @@ export async function openVcf(): Promise<string | null> {
   return selected;
 }
 
+export async function openManyVcf(): Promise<string[]> {
+  const selected = await open({
+    title: "Open vCard files",
+    directory: false,
+    multiple: true,
+    filters: vcfFilter,
+    fileAccessMode: "scoped",
+  });
+
+  return Array.isArray(selected) ? selected : selected ? [selected] : [];
+}
+
+export async function openVcfFolder(): Promise<string | null> {
+  const selected = await open({
+    title: "Open folder with vCards",
+    directory: true,
+    multiple: false,
+    fileAccessMode: "scoped",
+  });
+
+  return Array.isArray(selected) ? selected[0] ?? null : selected;
+}
+
+export async function chooseOutputDirectory(): Promise<string | null> {
+  const selected = await open({
+    title: "Choose output directory",
+    directory: true,
+    multiple: false,
+    fileAccessMode: "scoped",
+  });
+
+  return Array.isArray(selected) ? selected[0] ?? null : selected;
+}
+
 export async function saveVcfAs(defaultPath?: string): Promise<string | null> {
   const selected = await save({
     title: "Save vCard file",
@@ -27,6 +61,10 @@ export async function saveVcfAs(defaultPath?: string): Promise<string | null> {
   });
 
   return selected ? ensureVcfExtension(selected) : null;
+}
+
+export async function listVcfFilesInDirectory(path: string): Promise<string[]> {
+  return invoke<string[]>("list_vcf_files_in_directory", { path });
 }
 
 export async function readVcfFile(path: string): Promise<string> {

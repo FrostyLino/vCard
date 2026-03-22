@@ -16,9 +16,13 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 }));
 
 import {
+  chooseOutputDirectory,
   ensureVcfExtension,
   getPathLabel,
+  listVcfFilesInDirectory,
+  openManyVcf,
   openVcf,
+  openVcfFolder,
   readVcfFile,
   saveVcfAs,
   writeVcfFile,
@@ -45,6 +49,39 @@ describe("file helpers", () => {
     );
   });
 
+  it("supports multi-file and folder selection for batch mode", async () => {
+    openMock
+      .mockResolvedValueOnce(["/tmp/a.vcf", "/tmp/b.vcf"])
+      .mockResolvedValueOnce("/tmp/folder")
+      .mockResolvedValueOnce("/tmp/output");
+
+    await expect(openManyVcf()).resolves.toEqual(["/tmp/a.vcf", "/tmp/b.vcf"]);
+    await expect(openVcfFolder()).resolves.toBe("/tmp/folder");
+    await expect(chooseOutputDirectory()).resolves.toBe("/tmp/output");
+
+    expect(openMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        title: "Open vCard files",
+        multiple: true,
+      }),
+    );
+    expect(openMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        title: "Open folder with vCards",
+        directory: true,
+      }),
+    );
+    expect(openMock).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        title: "Choose output directory",
+        directory: true,
+      }),
+    );
+  });
+
   it("saves with a guaranteed .vcf suffix and returns null on cancel", async () => {
     saveMock.mockResolvedValueOnce("/tmp/contact").mockResolvedValueOnce(null);
 
@@ -59,13 +96,24 @@ describe("file helpers", () => {
   });
 
   it("invokes the Tauri commands for reading and writing", async () => {
-    invokeMock.mockResolvedValueOnce("BEGIN:VCARD\r\nEND:VCARD\r\n").mockResolvedValueOnce(undefined);
+    invokeMock
+      .mockResolvedValueOnce(["/tmp/a.vcf", "/tmp/b.vcf"])
+      .mockResolvedValueOnce("BEGIN:VCARD\r\nEND:VCARD\r\n")
+      .mockResolvedValueOnce(undefined);
+
+    await expect(listVcfFilesInDirectory("/tmp/folder")).resolves.toEqual([
+      "/tmp/a.vcf",
+      "/tmp/b.vcf",
+    ]);
 
     await expect(readVcfFile("/tmp/jane.vcf")).resolves.toContain("BEGIN:VCARD");
     await writeVcfFile("/tmp/jane.vcf", "content");
 
-    expect(invokeMock).toHaveBeenNthCalledWith(1, "read_vcf_file", { path: "/tmp/jane.vcf" });
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "write_vcf_file", {
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "list_vcf_files_in_directory", {
+      path: "/tmp/folder",
+    });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "read_vcf_file", { path: "/tmp/jane.vcf" });
+    expect(invokeMock).toHaveBeenNthCalledWith(3, "write_vcf_file", {
       path: "/tmp/jane.vcf",
       content: "content",
     });
