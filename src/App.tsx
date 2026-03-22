@@ -1,12 +1,4 @@
-import {
-  cloneElement,
-  isValidElement,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
 import "./App.css";
@@ -22,10 +14,44 @@ import {
   type AddressValue,
   type ContactValue,
   type PhotoValue,
-  type ValidationIssue,
   type VCardDocument,
 } from "./lib/vcard";
-import { getPathLabel, openVcf, readVcfFile, saveVcfAs, writeVcfFile } from "./lib/file";
+import {
+  buildBatchPreviewSummary,
+  createBatchItem,
+  createEmptyBatchPatch,
+  createFailedBatchItem,
+  getBatchItemSerialized,
+  getBatchItemValidationIssues,
+  isBatchItemDirty,
+  isBatchPatchDirty,
+  type BatchItem,
+  type BatchPatch,
+  type BatchPreviewSummary,
+  type BatchWriteMode,
+  type ListPatchMode,
+  type ScalarPatchMode,
+} from "./lib/batch";
+import {
+  chooseOutputDirectory,
+  getPathLabel,
+  listVcfFilesInDirectory,
+  openManyVcf,
+  openVcf,
+  openVcfFolder,
+  readVcfFile,
+  saveVcfAs,
+  writeVcfFile,
+} from "./lib/file";
+import {
+  AddressSection,
+  ContactSection,
+  DocumentForm,
+  DocumentInsightsPanel,
+  FieldGroup,
+  SectionCard,
+  type DocumentEditorController,
+} from "./components/DocumentEditor";
 
 interface EditorSession {
   document: VCardDocument;
@@ -34,26 +60,59 @@ interface EditorSession {
   parseWarnings: string[];
 }
 
-type ContactKind = "email" | "phone" | "url" | "impp";
+interface BatchWorkspace {
+  items: BatchItem[];
+  selectedIds: string[];
+  search: string;
+  patch: BatchPatch;
+  preview: BatchPreviewSummary | null;
+  writeMode: BatchWriteMode;
+  outputDirectory: string | null;
+}
+
+type WorkspaceMode = "single" | "batch";
+type PhotoTarget =
+  | { kind: "single" }
+  | { kind: "batch-item"; itemId: string }
+  | { kind: "batch-patch" }
+  | null;
 
 function App() {
+  const [mode, setMode] = useState<WorkspaceMode>("single");
   const [session, setSession] = useState<EditorSession | null>(null);
+  const [batch, setBatch] = useState<BatchWorkspace>(createEmptyBatchWorkspace());
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState(
     "Open a .vcf file or start with a blank card.",
   );
   const [dragActive, setDragActive] = useState(false);
+  const [photoTarget, setPhotoTarget] = useState<PhotoTarget>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
 
   const serializedDocument = session ? serializeVcf(session.document) : "";
   const validationIssues = session ? validateVCardDocument(session.document) : [];
   const blockingIssues = validationIssues.filter((issue) => issue.level === "error");
   const isDirty = session ? serializedDocument !== session.savedSnapshot : false;
-  const isDirtyRef = useRef(isDirty);
+
+  const visibleBatchItems = useMemo(
+    () => batch.items.filter((item) => matchesBatchSearch(item, batch.search)),
+    [batch.items, batch.search],
+  );
+  const selectedBatchItems = batch.items.filter((item) => batch.selectedIds.includes(item.id));
+  const selectedValidBatchItems = selectedBatchItems.filter((item) => item.document);
+  const selectedInvalidBatchItems = selectedBatchItems.filter((item) => !item.document);
+  const batchHasDirtyItems = batch.items.some(isBatchItemDirty);
+  const batchHasPendingPatch =
+    selectedValidBatchItems.length > 1 && isBatchPatchDirty(batch.patch);
+  const batchHasUnsavedWork = batchHasDirtyItems || batchHasPendingPatch;
+
+  const modeRef = useRef(mode);
+  const hasUnsavedWorkRef = useRef(false);
 
   useEffect(() => {
-    isDirtyRef.current = isDirty;
-  }, [isDirty]);
+    modeRef.current = mode;
+    hasUnsavedWorkRef.current = mode === "single" ? isDirty : batchHasUnsavedWork;
+  }, [mode, isDirty, batchHasUnsavedWork]);
 
   useEffect(() => {
     if (!isTauriRuntime()) {
@@ -62,9 +121,7 @@ function App() {
 
     let unlisten: (() => void) | undefined;
 
-    const appWindow = getCurrentWindow();
-
-    void appWindow
+    void getCurrentWindow()
       .onDragDropEvent(async (event) => {
         if (event.payload.type === "enter") {
           setDragActive(true);
@@ -78,7 +135,12 @@ function App() {
 
         if (event.payload.type === "drop") {
           setDragActive(false);
-          await handlePathDrop(event.payload.paths);
+          if (modeRef.current === "batch") {
+            await handleBatchPathDrop(event.payload.paths);
+            return;
+          }
+
+          await handleSinglePathDrop(event.payload.paths);
         }
       })
       .then((dispose) => {
@@ -100,16 +162,16 @@ function App() {
 
     let unlisten: (() => void) | undefined;
 
-    const appWindow = getCurrentWindow();
-
-    void appWindow
+    void getCurrentWindow()
       .onCloseRequested(async (event) => {
-        if (!isDirtyRef.current) {
+        if (!hasUnsavedWorkRef.current) {
           return;
         }
 
         const shouldDiscard = await confirm(
-          "You have unsaved changes. Close the editor anyway?",
+          modeRef.current === "single"
+            ? "You have unsaved changes. Close the editor anyway?"
+            : "You have unapplied batch changes. Close the editor anyway?",
           {
             title: "Unsaved changes",
             kind: "warning",
@@ -132,8 +194,25 @@ function App() {
     };
   }, []);
 
+  async function handleModeChange(nextMode: WorkspaceMode) {
+    if (nextMode === mode) {
+      return;
+    }
+
+    if (!(await confirmDiscardCurrentWork())) {
+      return;
+    }
+
+    setMode(nextMode);
+    setStatusMessage(
+      nextMode === "single"
+        ? "Switched to the single contact editor."
+        : "Switched to batch editing. Import multiple files or a folder to begin.",
+    );
+  }
+
   async function handleOpen() {
-    if (!(await confirmDiscardChanges())) {
+    if (!(await confirmDiscardCurrentWork())) {
       return;
     }
 
@@ -143,14 +222,14 @@ function App() {
         return;
       }
 
-      await loadPath(path);
+      await loadSinglePath(path);
     } catch (error) {
       await showError("Could not open a file", error);
     }
   }
 
   async function handleNewDraft() {
-    if (!(await confirmDiscardChanges())) {
+    if (!(await confirmDiscardCurrentWork())) {
       return;
     }
 
@@ -161,47 +240,8 @@ function App() {
       savedSnapshot: serializeVcf(draft),
       parseWarnings: [],
     });
+    setMode("single");
     setStatusMessage("Started a blank vCard draft.");
-  }
-
-  function handleChoosePhoto() {
-    photoInputRef.current?.click();
-  }
-
-  async function handlePhotoSelected(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.currentTarget.files?.[0];
-    event.currentTarget.value = "";
-
-    if (!file || !session) {
-      return;
-    }
-
-    try {
-      if (!file.type.startsWith("image/")) {
-        throw new Error("Only image files can be used as a contact photo.");
-      }
-
-      const photo = await readFileAsPhotoValue(file);
-      updateDocument((document) => ({
-        ...document,
-        photo,
-      }));
-      setStatusMessage(`Added profile image ${file.name}.`);
-    } catch (error) {
-      await showError("Could not add the profile image", error);
-    }
-  }
-
-  function handleRemovePhoto() {
-    if (!session?.document.photo) {
-      return;
-    }
-
-    updateDocument((document) => ({
-      ...document,
-      photo: null,
-    }));
-    setStatusMessage("Removed the profile image.");
   }
 
   async function handleSave() {
@@ -261,6 +301,200 @@ function App() {
     }
   }
 
+  async function handleBatchAddFiles() {
+    try {
+      const paths = await openManyVcf();
+      if (paths.length === 0) {
+        return;
+      }
+
+      await importBatchPaths(paths);
+    } catch (error) {
+      await showError("Could not import files", error);
+    }
+  }
+
+  async function handleBatchOpenFolder() {
+    try {
+      const folderPath = await openVcfFolder();
+      if (!folderPath) {
+        return;
+      }
+
+      const paths = await listVcfFilesInDirectory(folderPath);
+      if (paths.length === 0) {
+        setStatusMessage("No .vcf files were found in the selected folder.");
+        return;
+      }
+
+      await importBatchPaths(paths);
+    } catch (error) {
+      await showError("Could not import a folder", error);
+    }
+  }
+
+  async function handleChooseOutputDirectory() {
+    try {
+      const outputDirectory = await chooseOutputDirectory();
+      if (!outputDirectory) {
+        return;
+      }
+
+      updateBatch((current) => ({
+        ...current,
+        outputDirectory,
+      }));
+      setStatusMessage(`Selected ${getPathLabel(outputDirectory)} as the batch output folder.`);
+    } catch (error) {
+      await showError("Could not choose an output directory", error);
+    }
+  }
+
+  async function handleBatchPreview() {
+    if (batch.selectedIds.length === 0) {
+      await showError("Nothing selected", "Select at least one batch item to preview the apply run.");
+      return;
+    }
+
+    const preview = buildActiveBatchPreview();
+    setBatch((current) => ({
+      ...current,
+      preview,
+    }));
+    setStatusMessage(
+      preview.writeCount > 0
+        ? `Preview prepared for ${preview.writeCount} file(s).`
+        : "Nothing would be written with the current selection and settings.",
+    );
+  }
+
+  async function handleBatchApply() {
+    const preview = batch.preview ?? buildActiveBatchPreview();
+
+    if (preview.writeCount === 0) {
+      await showError(
+        "Nothing to apply",
+        "The current selection does not contain any writable changes.",
+      );
+      return;
+    }
+
+    try {
+      setBusyLabel("Applying");
+      const itemResults = new Map<
+        string,
+        {
+          status: BatchItem["status"];
+          message: string;
+          document?: VCardDocument | null;
+          content?: string;
+          outputPath?: string;
+          updateSavedSnapshot: boolean;
+        }
+      >();
+
+      for (const entry of preview.entries) {
+        if (entry.action !== "write" || !entry.document) {
+          continue;
+        }
+
+        const sourceItem = batch.items.find((item) => item.id === entry.itemId);
+
+        if (!sourceItem) {
+          continue;
+        }
+
+        try {
+          if (batch.writeMode === "in-place") {
+            if (!entry.backupPath) {
+              throw new Error("No backup path was created for the in-place batch write.");
+            }
+
+            await writeVcfFile(entry.backupPath, sourceItem.persistedContent);
+            await writeVcfFile(entry.targetPath, entry.content);
+
+            itemResults.set(entry.itemId, {
+              status: "updated",
+              message: `Updated in place and created ${getPathLabel(entry.backupPath)}.`,
+              document: entry.document,
+              content: entry.content,
+              updateSavedSnapshot: true,
+            });
+            continue;
+          }
+
+          await writeVcfFile(entry.targetPath, entry.content);
+          itemResults.set(entry.itemId, {
+            status: "updated",
+            message: `Exported to ${getPathLabel(entry.targetPath)}.`,
+            document: entry.document,
+            content: entry.content,
+            outputPath: entry.targetPath,
+            updateSavedSnapshot: false,
+          });
+        } catch (error) {
+          itemResults.set(entry.itemId, {
+            status: "failed",
+            message: toErrorMessage(error),
+            updateSavedSnapshot: false,
+          });
+        }
+      }
+
+      setBatch((current) => ({
+        ...current,
+        items: current.items.map((item) => {
+          const previewEntry = preview.entries.find((entry) => entry.itemId === item.id);
+          const writeResult = itemResults.get(item.id);
+
+          if (writeResult) {
+            if (writeResult.updateSavedSnapshot && writeResult.content && writeResult.document) {
+              return {
+                ...item,
+                document: writeResult.document,
+                savedSnapshot: writeResult.content,
+                persistedContent: writeResult.content,
+                status: writeResult.status,
+                statusMessage: writeResult.message,
+                lastOutputPath: undefined,
+              };
+            }
+
+            return {
+              ...item,
+              document: writeResult.document ?? item.document,
+              status: writeResult.status,
+              statusMessage: writeResult.message,
+              lastOutputPath: writeResult.outputPath ?? item.lastOutputPath,
+            };
+          }
+
+          if (previewEntry?.action === "skip") {
+            return {
+              ...item,
+              status: previewEntry.reason?.toLowerCase().includes("error") ? "failed" : "skipped",
+              statusMessage: previewEntry.reason,
+            };
+          }
+
+          return item;
+        }),
+        patch: selectedValidBatchItems.length > 1 ? createEmptyBatchPatch() : current.patch,
+        preview,
+      }));
+
+      setStatusMessage(
+        batch.writeMode === "in-place"
+          ? `Applied batch changes to ${preview.writeCount} file(s) in place.`
+          : `Exported ${preview.writeCount} batch file(s) to the chosen folder.`,
+      );
+    } catch (error) {
+      await showError("Could not apply the batch run", error);
+    } finally {
+      setBusyLabel(null);
+    }
+  }
+
   async function persistDocument(
     targetPath: string,
     document: VCardDocument,
@@ -288,7 +522,7 @@ function App() {
     }
   }
 
-  async function loadPath(path: string) {
+  async function loadSinglePath(path: string) {
     try {
       setBusyLabel("Opening");
       const text = await readVcfFile(path);
@@ -301,7 +535,7 @@ function App() {
         savedSnapshot: stableSnapshot,
         parseWarnings: result.warnings,
       });
-
+      setMode("single");
       setStatusMessage(
         result.warnings.length > 0
           ? `Opened ${getPathLabel(path)} with ${result.warnings.length} import warning(s).`
@@ -314,31 +548,99 @@ function App() {
     }
   }
 
-  async function handlePathDrop(paths: string[]) {
+  async function importBatchPaths(paths: string[]) {
+    try {
+      setBusyLabel("Importing");
+      const uniquePaths = Array.from(
+        new Set(paths.filter((path) => path.toLowerCase().endsWith(".vcf"))),
+      );
+
+      const importedItems = await Promise.all(
+        uniquePaths.map(async (path) => {
+          try {
+            const content = await readVcfFile(path);
+            return createBatchItem(path, content);
+          } catch (error) {
+            return createFailedBatchItem(path, toErrorMessage(error));
+          }
+        }),
+      );
+
+      setBatch((current) => {
+        const nextItems = mergeBatchItems(current.items, importedItems);
+        const nextSelectedIds =
+          current.selectedIds.length > 0
+            ? current.selectedIds.filter((id) => nextItems.some((item) => item.id === id))
+            : nextItems.find((item) => item.document)?.id
+              ? [nextItems.find((item) => item.document)?.id ?? ""]
+              : [];
+
+        return {
+          ...current,
+          items: nextItems,
+          selectedIds: nextSelectedIds.filter(Boolean),
+          preview: null,
+        };
+      });
+
+      setMode("batch");
+      setStatusMessage(`Imported ${importedItems.length} vCard file(s) into the batch workspace.`);
+    } finally {
+      setBusyLabel(null);
+    }
+  }
+
+  async function handleSinglePathDrop(paths: string[]) {
     const firstVcf = paths.find((path) => path.toLowerCase().endsWith(".vcf"));
     if (!firstVcf) {
       await showError("Unsupported drop", "Drop exactly one .vcf file to open it.");
       return;
     }
 
-    if (!(await confirmDiscardChanges())) {
+    if (!(await confirmDiscardCurrentWork())) {
       return;
     }
 
-    await loadPath(firstVcf);
+    await loadSinglePath(firstVcf);
   }
 
-  async function confirmDiscardChanges() {
-    if (!isDirty) {
+  async function handleBatchPathDrop(paths: string[]) {
+    const vcfPaths = paths.filter((path) => path.toLowerCase().endsWith(".vcf"));
+    if (vcfPaths.length === 0) {
+      await showError("Unsupported drop", "Drop one or more .vcf files to batch import them.");
+      return;
+    }
+
+    await importBatchPaths(vcfPaths);
+  }
+
+  async function confirmDiscardCurrentWork() {
+    if (mode === "single") {
+      if (!isDirty) {
+        return true;
+      }
+
+      return confirm("You have unsaved changes. Discard them and continue?", {
+        title: "Unsaved changes",
+        kind: "warning",
+        okLabel: "Discard changes",
+        cancelLabel: "Keep editing",
+      });
+    }
+
+    if (!batchHasUnsavedWork) {
       return true;
     }
 
-    return confirm("You have unsaved changes. Discard them and continue?", {
-      title: "Unsaved changes",
-      kind: "warning",
-      okLabel: "Discard changes",
-      cancelLabel: "Keep editing",
-    });
+    return confirm(
+      "You have dirty batch items or an unapplied batch patch. Discard them and continue?",
+      {
+        title: "Unapplied batch changes",
+        kind: "warning",
+        okLabel: "Discard changes",
+        cancelLabel: "Keep editing",
+      },
+    );
   }
 
   async function showError(title: string, error: unknown) {
@@ -353,7 +655,7 @@ function App() {
     }
   }
 
-  function updateDocument(update: (document: VCardDocument) => VCardDocument) {
+  function updateSingleDocument(update: (document: VCardDocument) => VCardDocument) {
     setSession((current) =>
       current
         ? {
@@ -364,113 +666,128 @@ function App() {
     );
   }
 
-  function updateTextField(
-    field: "formattedName" | "title" | "role" | "birthday" | "anniversary" | "note",
-    value: string,
+  function createSingleController(): DocumentEditorController {
+    return createDocumentController(
+      updateSingleDocument,
+      () => handleChoosePhoto({ kind: "single" }),
+      () =>
+        updateSingleDocument((document) => ({
+          ...document,
+          photo: null,
+        })),
+    );
+  }
+
+  function createBatchItemController(itemId: string): DocumentEditorController {
+    return createDocumentController(
+      (update) => updateBatchItemDocument(itemId, update),
+      () => handleChoosePhoto({ kind: "batch-item", itemId }),
+      () =>
+        updateBatchItemDocument(itemId, (document) => ({
+          ...document,
+          photo: null,
+        })),
+    );
+  }
+
+  function updateBatch(mutator: (workspace: BatchWorkspace) => BatchWorkspace) {
+    setBatch((current) => {
+      const next = mutator(current);
+      return {
+        ...next,
+        preview: null,
+      };
+    });
+  }
+
+  function updateBatchItemDocument(
+    itemId: string,
+    update: (document: VCardDocument) => VCardDocument,
   ) {
-    updateDocument((document) => ({
-      ...document,
-      [field]: value,
-    }));
-  }
-
-  function updateStructuredNameField(
-    field: keyof VCardDocument["name"],
-    value: string,
-  ) {
-    updateDocument((document) => ({
-      ...document,
-      name: {
-        ...document.name,
-        [field]: value,
-      },
-    }));
-  }
-
-  function updateNicknames(value: string) {
-    updateDocument((document) => ({
-      ...document,
-      nicknames: splitCommaSeparated(value),
-    }));
-  }
-
-  function updateOrganization(value: string) {
-    updateDocument((document) => ({
-      ...document,
-      organizationUnits: splitSemicolonSeparated(value),
-    }));
-  }
-
-  function addContactEntry(listKey: "emails" | "phones" | "urls" | "impps") {
-    updateDocument((document) => ({
-      ...document,
-      [listKey]: [...document[listKey], createEmptyContactValue()],
-    }));
-  }
-
-  function updateContactEntry(
-    listKey: "emails" | "phones" | "urls" | "impps",
-    index: number,
-    update: (entry: ContactValue) => ContactValue,
-  ) {
-    updateDocument((document) => ({
-      ...document,
-      [listKey]: document[listKey].map((entry, entryIndex) =>
-        entryIndex === index ? update(entry) : entry,
+    updateBatch((current) => ({
+      ...current,
+      items: current.items.map((item) =>
+        item.id === itemId && item.document
+          ? {
+              ...item,
+              document: ensureManagedMetadata(update(item.document)),
+              status: "ready",
+              statusMessage: undefined,
+            }
+          : item,
       ),
     }));
   }
 
-  function removeContactEntry(
-    listKey: "emails" | "phones" | "urls" | "impps",
-    index: number,
-  ) {
-    updateDocument((document) => ({
-      ...document,
-      [listKey]: document[listKey].filter((_, entryIndex) => entryIndex !== index),
+  function updateBatchPatch(mutator: (patch: BatchPatch) => BatchPatch) {
+    updateBatch((current) => ({
+      ...current,
+      patch: mutator(current.patch),
     }));
   }
 
-  function moveContactEntry(
-    listKey: "emails" | "phones" | "urls" | "impps",
-    index: number,
-    direction: -1 | 1,
-  ) {
-    updateDocument((document) => ({
-      ...document,
-      [listKey]: moveItem(document[listKey], index, direction),
-    }));
+  function handleChoosePhoto(target: Exclude<PhotoTarget, null>) {
+    setPhotoTarget(target);
+    photoInputRef.current?.click();
   }
 
-  function addAddressEntry() {
-    updateDocument((document) => ({
-      ...document,
-      addresses: [...document.addresses, createEmptyAddressValue()],
-    }));
+  async function handlePhotoSelected(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+
+    if (!file || !photoTarget) {
+      return;
+    }
+
+    try {
+      if (!file.type.startsWith("image/")) {
+        throw new Error("Only image files can be used as a contact photo.");
+      }
+
+      const photo = await readFileAsPhotoValue(file);
+
+      if (photoTarget.kind === "single") {
+        updateSingleDocument((document) => ({
+          ...document,
+          photo,
+        }));
+        setStatusMessage(`Added profile image ${file.name}.`);
+        return;
+      }
+
+      if (photoTarget.kind === "batch-item") {
+        updateBatchItemDocument(photoTarget.itemId, (document) => ({
+          ...document,
+          photo,
+        }));
+        setStatusMessage(`Updated the selected batch contact image to ${file.name}.`);
+        return;
+      }
+
+      updateBatchPatch((patch) => ({
+        ...patch,
+        photo: {
+          mode: "replace",
+          value: photo,
+        },
+      }));
+      setStatusMessage(`Prepared ${file.name} as the replacement photo for the batch patch.`);
+    } catch (error) {
+      await showError("Could not add the profile image", error);
+    } finally {
+      setPhotoTarget(null);
+    }
   }
 
-  function updateAddressEntry(index: number, update: (entry: AddressValue) => AddressValue) {
-    updateDocument((document) => ({
-      ...document,
-      addresses: document.addresses.map((entry, entryIndex) =>
-        entryIndex === index ? update(entry) : entry,
-      ),
-    }));
+  function buildActiveBatchPreview() {
+    return buildBatchPreviewSummary(batch.items, batch.selectedIds, {
+      patch: selectedValidBatchItems.length > 1 ? batch.patch : null,
+      writeMode: batch.writeMode,
+      outputDirectory: batch.outputDirectory,
+    });
   }
 
-  function removeAddressEntry(index: number) {
-    updateDocument((document) => ({
-      ...document,
-      addresses: document.addresses.filter((_, entryIndex) => entryIndex !== index),
-    }));
-  }
-
-  function moveAddressEntry(index: number, direction: -1 | 1) {
-    updateDocument((document) => ({
-      ...document,
-      addresses: moveItem(document.addresses, index, direction),
-    }));
-  }
+  const singleController = createSingleController();
 
   return (
     <main className={`app-shell${dragActive ? " app-shell--drag" : ""}`}>
@@ -490,418 +807,507 @@ function App() {
           <div>
             <h1>vCard Editor</h1>
             <p className="brand__subtitle">
-              Focused editing for a single contact file with raw preview and safe
-              save flows.
+              Focused editing for a single contact file or a curated batch apply run.
             </p>
           </div>
         </div>
 
         <div className="header-meta">
           <div className="meta-card">
-            <span className="meta-card__label">File</span>
-            <strong>{getPathLabel(session?.sourcePath ?? null)}</strong>
+            <span className="meta-card__label">Mode</span>
+            <strong>{mode === "single" ? "Single editor" : "Batch editor"}</strong>
           </div>
           <div className="meta-card">
             <span className="meta-card__label">State</span>
-            <strong>{busyLabel ?? (isDirty ? "Unsaved changes" : "Synced")}</strong>
+            <strong>
+              {busyLabel ??
+                (mode === "single"
+                  ? isDirty
+                    ? "Unsaved changes"
+                    : "Synced"
+                  : batchHasUnsavedWork
+                    ? "Pending apply"
+                    : "Ready")}
+            </strong>
           </div>
           <div className="meta-card">
-            <span className="meta-card__label">Version</span>
-            <strong>{session?.document.version ?? "4.0 draft"}</strong>
+            <span className="meta-card__label">
+              {mode === "single" ? "File" : "Imported files"}
+            </span>
+            <strong>
+              {mode === "single"
+                ? getPathLabel(session?.sourcePath ?? null)
+                : `${batch.items.length} loaded / ${batch.selectedIds.length} selected`}
+            </strong>
           </div>
         </div>
 
         <div className="header-actions">
-          <button type="button" className="button button--ghost" onClick={handleOpen}>
-            Open
-          </button>
-          <button type="button" className="button button--ghost" onClick={handleNewDraft}>
-            New blank
-          </button>
-          <button
-            type="button"
-            className="button"
-            onClick={handleSave}
-            disabled={!session || !!busyLabel}
-          >
-            Save
-          </button>
-          <button
-            type="button"
-            className="button button--secondary"
-            onClick={handleSaveAs}
-            disabled={!session || !!busyLabel}
-          >
-            Save As
-          </button>
-        </div>
-      </header>
+          <div className="mode-tabs" role="tablist" aria-label="Editor mode">
+            <button
+              type="button"
+              className={`mode-tab${mode === "single" ? " mode-tab--active" : ""}`}
+              onClick={() => void handleModeChange("single")}
+              role="tab"
+              aria-selected={mode === "single"}
+            >
+              Single
+            </button>
+            <button
+              type="button"
+              className={`mode-tab${mode === "batch" ? " mode-tab--active" : ""}`}
+              onClick={() => void handleModeChange("batch")}
+              role="tab"
+              aria-selected={mode === "batch"}
+            >
+              Batch
+            </button>
+          </div>
 
-      <div className="status-bar">
-        <span className={`status-pill${isDirty ? " status-pill--warning" : ""}`}>
-          {isDirty ? "Unsaved" : "Ready"}
-        </span>
-        <p>{statusMessage}</p>
-      </div>
-
-      {!session ? (
-        <section className="empty-state" data-testid="empty-state">
-          <div className="empty-state__panel">
-            <span className="empty-state__eyebrow">Simple first step</span>
-            <h2>Edit one `.vcf` file with clarity.</h2>
-            <p>
-              Start from an existing export or a blank card. The preview on the
-              right side appears as soon as a document is loaded.
-            </p>
-            <div className="empty-state__actions">
-              <button type="button" className="button" onClick={handleOpen}>
-                Open a vCard file
+          {mode === "single" ? (
+            <>
+              <button type="button" className="button button--ghost" onClick={handleOpen}>
+                Open
+              </button>
+              <button type="button" className="button button--ghost" onClick={handleNewDraft}>
+                New blank
+              </button>
+              <button
+                type="button"
+                className="button"
+                onClick={handleSave}
+                disabled={!session || !!busyLabel}
+              >
+                Save
               </button>
               <button
                 type="button"
                 className="button button--secondary"
-                onClick={handleNewDraft}
+                onClick={handleSaveAs}
+                disabled={!session || !!busyLabel}
               >
-                Start blank
+                Save As
               </button>
-            </div>
-          </div>
+            </>
+          ) : null}
+        </div>
+      </header>
 
-          <div className="empty-state__guide">
-            <div className="guide-card">
-              <h3>Included in v1</h3>
-              <ul>
-                <li>Single-file editing for `.vcf`</li>
-                <li>Validation before save</li>
-                <li>Read-only raw preview</li>
-                <li>Drag-and-drop on macOS</li>
-              </ul>
+      <div className="status-bar">
+        <span
+          className={`status-pill${
+            (mode === "single" && isDirty) || (mode === "batch" && batchHasUnsavedWork)
+              ? " status-pill--warning"
+              : ""
+          }`}
+        >
+          {mode === "single"
+            ? isDirty
+              ? "Unsaved"
+              : "Ready"
+            : batchHasUnsavedWork
+              ? "Pending"
+              : "Ready"}
+        </span>
+        <p>{statusMessage}</p>
+      </div>
+
+      {mode === "single" ? (
+        !session ? (
+          <section className="empty-state" data-testid="empty-state">
+            <div className="empty-state__panel">
+              <span className="empty-state__eyebrow">Simple first step</span>
+              <h2>Edit one `.vcf` file with clarity.</h2>
+              <p>
+                Start from an existing export or a blank card. The preview on the
+                right side appears as soon as a document is loaded.
+              </p>
+              <div className="empty-state__actions">
+                <button type="button" className="button" onClick={handleOpen}>
+                  Open a vCard file
+                </button>
+                <button
+                  type="button"
+                  className="button button--secondary"
+                  onClick={handleNewDraft}
+                >
+                  Start blank
+                </button>
+              </div>
             </div>
-            <div className="guide-card">
-              <h3>Safe behavior</h3>
-              <ul>
-                <li>Unknown properties are preserved</li>
-                <li>Import warnings stay visible while editing</li>
-                <li>Save and Save As keep the flow explicit</li>
-              </ul>
+
+            <div className="empty-state__guide">
+              <div className="guide-card">
+                <h3>Included in single mode</h3>
+                <ul>
+                  <li>One `.vcf` file at a time</li>
+                  <li>Structured form editing</li>
+                  <li>Validation before save</li>
+                  <li>Read-only raw preview</li>
+                </ul>
+              </div>
+              <div className="guide-card">
+                <h3>Safe behavior</h3>
+                <ul>
+                  <li>Unknown properties are preserved</li>
+                  <li>Import warnings stay visible while editing</li>
+                  <li>Save and Save As keep the flow explicit</li>
+                </ul>
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        ) : (
+          <section className="workspace">
+            <div className="editor-column">
+              <DocumentForm document={session.document} controller={singleController} />
+            </div>
+
+            <aside className="side-column">
+              <DocumentInsightsPanel
+                parseWarnings={session.parseWarnings}
+                issues={validationIssues}
+                unknownPropertyCount={session.document.unknownProperties.length}
+                document={session.document}
+                serializedDocument={serializedDocument}
+              />
+            </aside>
+          </section>
+        )
       ) : (
-        <section className="workspace">
+        <section className="workspace workspace--batch" data-testid="batch-workspace">
           <div className="editor-column">
             <SectionCard
-              title="Profile image"
-              description="Embed a portrait directly into the vCard so the file stays portable."
+              title="Batch set"
+              description="Import many vCards, search them, select them and prepare a safe apply run."
             >
-              <div className="photo-card">
-                {session.document.photo ? (
-                  <div className="photo-frame">
-                    <img
-                      src={session.document.photo.uri}
-                      alt="Contact profile"
-                      className="photo-frame__image"
+              <div className="batch-toolbar">
+                <div className="batch-toolbar__actions">
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    onClick={handleBatchAddFiles}
+                  >
+                    Add files
+                  </button>
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    onClick={handleBatchOpenFolder}
+                  >
+                    Open folder
+                  </button>
+                </div>
+                <div className="batch-toolbar__search">
+                  <FieldGroup
+                    label="Search"
+                    hint="Filter by file name, display name, organization, title or role."
+                  >
+                    <input
+                      value={batch.search}
+                      onChange={(event) =>
+                        updateBatch((current) => ({
+                          ...current,
+                          search: event.currentTarget.value,
+                        }))
+                      }
+                      placeholder="Search the batch set"
+                      autoComplete="off"
                     />
-                  </div>
-                ) : (
-                  <div className="photo-frame photo-frame--empty">
-                    <span className="photo-frame__placeholder">No image selected</span>
-                  </div>
-                )}
-
-                <div className="photo-meta">
-                  <h3>{session.document.photo ? "Current profile image" : "No profile image yet"}</h3>
-                  <p>
-                    {session.document.photo
-                      ? session.document.photo.isEmbedded
-                        ? "This image is embedded into the .vcf file."
-                        : "This photo is linked by URI and will be preserved."
-                      : "Choose an image to store it as the contact photo. JPEG and PNG are the safest formats for iOS and other contacts apps."}
-                  </p>
-                  {session.document.photo?.mediaType ? (
-                    <span className="status-pill">{session.document.photo.mediaType}</span>
-                  ) : null}
-                  <div className="photo-meta__actions">
-                    <button
-                      type="button"
-                      className="button button--ghost"
-                      onClick={handleChoosePhoto}
-                    >
-                      {session.document.photo ? "Replace image" : "Choose image"}
-                    </button>
-                    <button
-                      type="button"
-                      className="button button--secondary"
-                      onClick={handleRemovePhoto}
-                      disabled={!session.document.photo}
-                    >
-                      Remove image
-                    </button>
-                  </div>
+                  </FieldGroup>
                 </div>
               </div>
-            </SectionCard>
 
-            <SectionCard
-              title="Identity"
-              description="Core name fields shown by contact apps first."
-            >
-              <FieldGroup
-                label="Formatted name (FN)"
-                hint="Required. This is the visible display name in contact apps."
-                required
-              >
-                <input
-                  value={session.document.formattedName}
-                  onChange={(event) => updateTextField("formattedName", event.currentTarget.value)}
-                  placeholder="Jane Doe"
-                  autoComplete="name"
-                  autoCapitalize="words"
-                />
-              </FieldGroup>
+              {batch.items.length === 0 ? (
+                <p className="section-empty">
+                  No batch items yet. Add multiple `.vcf` files or import a folder to start.
+                </p>
+              ) : (
+                <div className="batch-table-wrap">
+                  <div className="batch-table-actions">
+                    <label className="batch-select-all">
+                      <input
+                        type="checkbox"
+                        checked={
+                          visibleBatchItems.filter((item) => item.document).length > 0 &&
+                          visibleBatchItems
+                            .filter((item) => item.document)
+                            .every((item) => batch.selectedIds.includes(item.id))
+                        }
+                        onChange={() => {
+                          const visibleValidIds = visibleBatchItems
+                            .filter((item) => item.document)
+                            .map((item) => item.id);
 
-              <div className="grid grid--two">
-                <FieldGroup label="Given name" hint="First name only.">
-                  <input
-                    value={session.document.name.given}
-                    onChange={(event) =>
-                      updateStructuredNameField("given", event.currentTarget.value)
-                    }
-                    placeholder="Jane"
-                    autoComplete="given-name"
-                    autoCapitalize="words"
-                  />
-                </FieldGroup>
-                <FieldGroup label="Family name" hint="Surname or last name.">
-                  <input
-                    value={session.document.name.family}
-                    onChange={(event) =>
-                      updateStructuredNameField("family", event.currentTarget.value)
-                    }
-                    placeholder="Doe"
-                    autoComplete="family-name"
-                    autoCapitalize="words"
-                  />
-                </FieldGroup>
-                <FieldGroup label="Additional names" hint="Middle names, if any.">
-                  <input
-                    value={session.document.name.additional}
-                    onChange={(event) =>
-                      updateStructuredNameField("additional", event.currentTarget.value)
-                    }
-                    placeholder="Middle names"
-                    autoComplete="additional-name"
-                    autoCapitalize="words"
-                  />
-                </FieldGroup>
-                <FieldGroup label="Prefix" hint="Honorific, for example Dr.">
-                  <input
-                    value={session.document.name.prefix}
-                    onChange={(event) =>
-                      updateStructuredNameField("prefix", event.currentTarget.value)
-                    }
-                    placeholder="Dr."
-                    autoComplete="honorific-prefix"
-                    autoCapitalize="words"
-                  />
-                </FieldGroup>
-                <FieldGroup label="Suffix" hint="Suffix, for example Jr.">
-                  <input
-                    value={session.document.name.suffix}
-                    onChange={(event) =>
-                      updateStructuredNameField("suffix", event.currentTarget.value)
-                    }
-                    placeholder="Jr."
-                    autoComplete="honorific-suffix"
-                    autoCapitalize="words"
-                  />
-                </FieldGroup>
-                <FieldGroup
-                  label="Nicknames"
-                  hint="Comma separated. Capitalization is preserved."
-                >
-                  <input
-                    value={session.document.nicknames.join(", ")}
-                    onChange={(event) => updateNicknames(event.currentTarget.value)}
-                    placeholder="JJ, J"
-                    autoComplete="nickname"
-                  />
-                </FieldGroup>
-              </div>
-            </SectionCard>
+                          updateBatch((current) => {
+                            const everySelected = visibleValidIds.every((id) =>
+                              current.selectedIds.includes(id),
+                            );
 
-            <SectionCard
-              title="Professional"
-              description="Company details plus title and role."
-            >
-              <div className="grid grid--two">
-                <FieldGroup label="Organization" hint="Use semicolons to separate units">
-                  <input
-                    value={session.document.organizationUnits.join("; ")}
-                    onChange={(event) => updateOrganization(event.currentTarget.value)}
-                    placeholder="Acme GmbH; Product"
-                    autoComplete="organization"
-                    autoCapitalize="words"
-                  />
-                </FieldGroup>
-                <FieldGroup label="Title" hint="Role or job title.">
-                  <input
-                    value={session.document.title}
-                    onChange={(event) => updateTextField("title", event.currentTarget.value)}
-                    placeholder="Design Lead"
-                    autoComplete="organization-title"
-                    autoCapitalize="words"
-                  />
-                </FieldGroup>
-                <FieldGroup
-                  label="Role"
-                  hint="Functional role in the organization, separate from the title."
-                >
-                  <input
-                    value={session.document.role}
-                    onChange={(event) => updateTextField("role", event.currentTarget.value)}
-                    placeholder="Primary client contact"
-                    autoComplete="off"
-                    autoCapitalize="words"
-                  />
-                </FieldGroup>
-              </div>
-            </SectionCard>
+                            return {
+                              ...current,
+                              selectedIds: everySelected
+                                ? current.selectedIds.filter((id) => !visibleValidIds.includes(id))
+                                : Array.from(new Set([...current.selectedIds, ...visibleValidIds])),
+                            };
+                          });
+                        }}
+                      />
+                      <span>Select visible valid files</span>
+                    </label>
+                    <span className="batch-counter">
+                      {visibleBatchItems.length} visible / {batch.selectedIds.length} selected
+                    </span>
+                  </div>
 
-            <SectionCard
-              title="Dates"
-              description="Optional structured contact dates using the YYYY-MM-DD format."
-            >
-              <div className="grid grid--two">
-                <FieldGroup
-                  label="Birthday"
-                  hint="Use a full date such as 1988-04-12 for the best interoperability."
-                >
-                  <input
-                    type="date"
-                    value={session.document.birthday}
-                    onChange={(event) => updateTextField("birthday", event.currentTarget.value)}
-                    placeholder="1988-04-12"
-                  />
-                </FieldGroup>
-                <FieldGroup
-                  label="Anniversary"
-                  hint="Use a full date such as 2018-09-01 if you want to store it explicitly."
-                >
-                  <input
-                    type="date"
-                    value={session.document.anniversary}
-                    onChange={(event) => updateTextField("anniversary", event.currentTarget.value)}
-                    placeholder="2018-09-01"
-                  />
-                </FieldGroup>
-              </div>
-            </SectionCard>
+                  <table className="batch-table">
+                    <thead>
+                      <tr>
+                        <th>Select</th>
+                        <th>File</th>
+                        <th>Formatted name</th>
+                        <th>Organization</th>
+                        <th>Title</th>
+                        <th>Role</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleBatchItems.map((item) => {
+                        const document = item.document;
+                        const itemIssues = getBatchItemValidationIssues(item);
+                        const isSelected = batch.selectedIds.includes(item.id);
 
-            <ContactSection
-              title="Email addresses"
-              description="Use complete email addresses. Multiple entries are supported."
-              kind="email"
-              addLabel="Add email"
-              entries={session.document.emails}
-              placeholder="jane@company.com"
-              onAdd={() => addContactEntry("emails")}
-              onChange={(index, update) => updateContactEntry("emails", index, update)}
-              onMove={(index, direction) => moveContactEntry("emails", index, direction)}
-              onRemove={(index) => removeContactEntry("emails", index)}
-            />
+                        return (
+                          <tr
+                            key={item.id}
+                            className={isSelected ? "batch-table__row batch-table__row--selected" : "batch-table__row"}
+                            onClick={() => {
+                              if (!document) {
+                                return;
+                              }
 
-            <ContactSection
-              title="Phone numbers"
-              description="International formatting is recommended for best sync behavior."
-              kind="phone"
-              addLabel="Add phone"
-              entries={session.document.phones}
-              placeholder="+49 151 23456789"
-              onAdd={() => addContactEntry("phones")}
-              onChange={(index, update) => updateContactEntry("phones", index, update)}
-              onMove={(index, direction) => moveContactEntry("phones", index, direction)}
-              onRemove={(index) => removeContactEntry("phones", index)}
-            />
+                              updateBatch((current) => ({
+                                ...current,
+                                selectedIds: [item.id],
+                              }));
+                            }}
+                          >
+                            <td>
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                disabled={!document}
+                                onChange={(event) => {
+                                  event.stopPropagation();
 
-            <ContactSection
-              title="URLs"
-              description="Use complete URLs including the scheme, for example https://."
-              kind="url"
-              addLabel="Add URL"
-              entries={session.document.urls}
-              placeholder="https://example.com"
-              onAdd={() => addContactEntry("urls")}
-              onChange={(index, update) => updateContactEntry("urls", index, update)}
-              onMove={(index, direction) => moveContactEntry("urls", index, direction)}
-              onRemove={(index) => removeContactEntry("urls", index)}
-            />
+                                  if (!document) {
+                                    return;
+                                  }
 
-            <ContactSection
-              title="Instant messaging"
-              description="Use complete messaging URIs such as sip:, xmpp:, im: or msteams:."
-              kind="impp"
-              addLabel="Add IM URI"
-              entries={session.document.impps}
-              placeholder="xmpp:jane@example.com"
-              onAdd={() => addContactEntry("impps")}
-              onChange={(index, update) => updateContactEntry("impps", index, update)}
-              onMove={(index, direction) => moveContactEntry("impps", index, direction)}
-              onRemove={(index) => removeContactEntry("impps", index)}
-            />
-
-            <AddressSection
-              entries={session.document.addresses}
-              onAdd={addAddressEntry}
-              onChange={updateAddressEntry}
-              onMove={moveAddressEntry}
-              onRemove={removeAddressEntry}
-            />
-
-            <SectionCard
-              title="Notes"
-              description="Stored as NOTE in the final vCard."
-            >
-              <FieldGroup label="Note" hint="Freeform text. Line breaks are preserved.">
-                <textarea
-                  value={session.document.note}
-                  onChange={(event) => updateTextField("note", event.currentTarget.value)}
-                  placeholder="Context, reminders or freeform metadata"
-                  rows={6}
-                  spellCheck
-                />
-              </FieldGroup>
+                                  updateBatch((current) => ({
+                                    ...current,
+                                    selectedIds: event.currentTarget.checked
+                                      ? Array.from(new Set([...current.selectedIds, item.id]))
+                                      : current.selectedIds.filter((id) => id !== item.id),
+                                  }));
+                                }}
+                              />
+                            </td>
+                            <td>{getPathLabel(item.sourcePath)}</td>
+                            <td>{document?.formattedName || "Unreadable file"}</td>
+                            <td>{document?.organizationUnits[0] ?? "—"}</td>
+                            <td>{document?.title || "—"}</td>
+                            <td>{document?.role || "—"}</td>
+                            <td>
+                              <div className="batch-status-cell">
+                                <span className={`status-pill${item.status === "failed" ? " status-pill--warning" : ""}`}>
+                                  {item.status}
+                                </span>
+                                <span className="batch-status-text">
+                                  {item.statusMessage ??
+                                    (item.parseWarnings.length > 0
+                                      ? `${item.parseWarnings.length} warning(s)`
+                                      : itemIssues.some((issue) => issue.level === "error")
+                                        ? "Validation errors"
+                                        : isBatchItemDirty(item)
+                                          ? "Unsaved item changes"
+                                          : "Ready")}
+                                </span>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </SectionCard>
           </div>
 
           <aside className="side-column">
-            <SectionCard
-              title="Validation"
-              description="Blocking errors prevent Save until resolved."
-            >
-              <ValidationList
-                parseWarnings={session.parseWarnings}
-                issues={validationIssues}
-                unknownPropertyCount={session.document.unknownProperties.length}
+            {batch.items.length === 0 ? (
+              <SectionCard
+                title="Batch editor"
+                description="The hybrid batch flow combines table selection with a full inspector and a patch panel."
+              >
+                <p className="section-empty">
+                  Import files first. One selected file opens the full editor here; multiple selected files open the patch builder.
+                </p>
+              </SectionCard>
+            ) : selectedValidBatchItems.length === 1 ? (
+              <>
+                <SectionCard
+                  title="Selected contact"
+                  description="This is the full structured editor for the currently selected batch item."
+                >
+                  <DocumentForm
+                    document={selectedValidBatchItems[0].document ?? createEmptyDocument()}
+                    controller={createBatchItemController(selectedValidBatchItems[0].id)}
+                  />
+                </SectionCard>
+                <DocumentInsightsPanel
+                  parseWarnings={selectedValidBatchItems[0].parseWarnings}
+                  issues={getBatchItemValidationIssues(selectedValidBatchItems[0])}
+                  unknownPropertyCount={
+                    selectedValidBatchItems[0].document?.unknownProperties.length ?? 0
+                  }
+                  document={selectedValidBatchItems[0].document ?? createEmptyDocument()}
+                  serializedDocument={getBatchItemSerialized(selectedValidBatchItems[0])}
+                />
+              </>
+            ) : selectedValidBatchItems.length > 1 ? (
+              <BatchPatchPanel
+                selectionCount={selectedValidBatchItems.length}
+                patch={batch.patch}
+                onPatchChange={updateBatchPatch}
+                onChoosePhoto={() => handleChoosePhoto({ kind: "batch-patch" })}
               />
-            </SectionCard>
+            ) : selectedInvalidBatchItems.length > 0 ? (
+              <SectionCard
+                title="Unreadable selection"
+                description="Some imported files could not be parsed and can only be inspected via status messages."
+              >
+                <p className="section-empty">
+                  The current selection only contains unreadable files. Fix or remove them before running a batch apply.
+                </p>
+              </SectionCard>
+            ) : (
+              <SectionCard
+                title="No selection"
+                description="Select one or more imported files to edit or patch them."
+              >
+                <p className="section-empty">
+                  Select one valid file for the full inspector or multiple valid files for the batch patch panel.
+                </p>
+              </SectionCard>
+            )}
 
             <SectionCard
-              title="Managed metadata"
-              description="UID and PRODID stay ready while REV is refreshed on save."
+              title="Apply run"
+              description="Preview is mandatory before writing. Choose between in-place updates and an output folder."
             >
-              <div className="metadata-list">
-                <MetadataItem label="UID" value={session.document.uid || "Not set yet"} />
-                <MetadataItem label="REV" value={session.document.rev || "Not set yet"} />
-                <MetadataItem label="PRODID" value={session.document.prodId || "Not set yet"} />
+              <div className="stack">
+                <FieldGroup
+                  label="Write mode"
+                  hint="In-place creates timestamped backups. Output directory keeps source files untouched."
+                >
+                  <select
+                    value={batch.writeMode}
+                    onChange={(event) =>
+                      updateBatch((current) => ({
+                        ...current,
+                        writeMode: event.currentTarget.value as BatchWriteMode,
+                      }))
+                    }
+                  >
+                    <option value="in-place">In-place with backups</option>
+                    <option value="output-directory">Write copies to output folder</option>
+                  </select>
+                </FieldGroup>
+
+                {batch.writeMode === "output-directory" ? (
+                  <div className="batch-output-row">
+                    <span className="batch-output-label">
+                      {batch.outputDirectory
+                        ? `Output: ${getPathLabel(batch.outputDirectory)}`
+                        : "No output directory selected yet"}
+                    </span>
+                    <button
+                      type="button"
+                      className="button button--ghost"
+                      onClick={handleChooseOutputDirectory}
+                    >
+                      Choose output folder
+                    </button>
+                  </div>
+                ) : null}
+
+                <div className="batch-apply-actions">
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    onClick={handleBatchPreview}
+                    disabled={batch.selectedIds.length === 0}
+                  >
+                    Preview apply
+                  </button>
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={handleBatchApply}
+                    disabled={batch.selectedIds.length === 0 || !!busyLabel}
+                  >
+                    Apply changes
+                  </button>
+                </div>
+
+                {batch.preview ? (
+                  <div className="batch-preview">
+                    <div className="validation-summary">
+                      <div className="summary-chip">
+                        <span>Write</span>
+                        <strong>{batch.preview.writeCount}</strong>
+                      </div>
+                      <div className="summary-chip">
+                        <span>Skip</span>
+                        <strong>{batch.preview.skipCount}</strong>
+                      </div>
+                      <div className="summary-chip">
+                        <span>Errors</span>
+                        <strong>{batch.preview.errorCount}</strong>
+                      </div>
+                    </div>
+
+                    <div className="stack">
+                      {batch.preview.entries.map((entry) => (
+                        <article
+                          key={`${entry.itemId}-${entry.targetPath}`}
+                          className={`issue issue--${entry.action === "write" ? "warning" : "error"}`}
+                        >
+                          <span className="issue__badge">
+                            {entry.action === "write" ? "write" : "skip"}
+                          </span>
+                          <div>
+                            <strong>{getPathLabel(entry.sourcePath)}</strong>
+                            <p>
+                              {entry.action === "write"
+                                ? entry.targetPath === entry.sourcePath
+                                  ? `Will update ${getPathLabel(entry.targetPath)} in place.`
+                                  : `Will export ${getPathLabel(entry.targetPath)}.`
+                                : entry.reason}
+                            </p>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="section-empty">
+                    Preview the current selection to see exactly what would be written.
+                  </p>
+                )}
               </div>
-            </SectionCard>
-
-            <SectionCard
-              title="Raw Preview"
-              description="Current serialized vCard preview. Managed REV updates on save."
-            >
-              <pre className="preview-panel">{serializedDocument}</pre>
             </SectionCard>
           </aside>
         </section>
@@ -910,504 +1316,880 @@ function App() {
   );
 }
 
-interface SectionCardProps {
-  title: string;
-  description: string;
-  children: ReactNode;
+interface BatchPatchPanelProps {
+  selectionCount: number;
+  patch: BatchPatch;
+  onPatchChange: (mutator: (patch: BatchPatch) => BatchPatch) => void;
+  onChoosePhoto: () => void;
 }
 
-function SectionCard({ title, description, children }: SectionCardProps) {
+function BatchPatchPanel({
+  selectionCount,
+  patch,
+  onPatchChange,
+  onChoosePhoto,
+}: BatchPatchPanelProps) {
   return (
-    <section className="section-card">
-      <div className="section-card__header">
-        <div>
-          <h2>{title}</h2>
-          <p>{description}</p>
-        </div>
+    <SectionCard
+      title="Batch patch"
+      description={`This patch will be applied to ${selectionCount} selected contacts after preview and apply.`}
+    >
+      <div className="stack">
+        <PatchTextField
+          label="Formatted name (FN)"
+          hint="Replace or clear the display name on all selected files."
+          mode={patch.formattedName.mode}
+          value={patch.formattedName.value}
+          onModeChange={(mode) =>
+            onPatchChange((current) => ({
+              ...current,
+              formattedName: {
+                ...current.formattedName,
+                mode,
+              },
+            }))
+          }
+          onValueChange={(value) =>
+            onPatchChange((current) => ({
+              ...current,
+              formattedName: {
+                ...current.formattedName,
+                value,
+              },
+            }))
+          }
+        />
+
+        <SectionCard
+          title="Structured name"
+          description="Replace or clear the full N structure on all selected contacts."
+        >
+          <PatchModeToolbar
+            mode={patch.name.mode}
+            modes={["keep", "replace", "clear"]}
+            onChange={(mode) =>
+              onPatchChange((current) => ({
+                ...current,
+                name: {
+                  ...current.name,
+                  mode,
+                },
+              }))
+            }
+          />
+          {patch.name.mode === "replace" ? (
+            <div className="grid grid--two">
+              <FieldGroup label="Given name">
+                <input
+                  value={patch.name.value.given}
+                  onChange={(event) =>
+                    onPatchChange((current) => ({
+                      ...current,
+                      name: {
+                        ...current.name,
+                        value: {
+                          ...current.name.value,
+                          given: event.currentTarget.value,
+                        },
+                      },
+                    }))
+                  }
+                />
+              </FieldGroup>
+              <FieldGroup label="Family name">
+                <input
+                  value={patch.name.value.family}
+                  onChange={(event) =>
+                    onPatchChange((current) => ({
+                      ...current,
+                      name: {
+                        ...current.name,
+                        value: {
+                          ...current.name.value,
+                          family: event.currentTarget.value,
+                        },
+                      },
+                    }))
+                  }
+                />
+              </FieldGroup>
+              <FieldGroup label="Additional names">
+                <input
+                  value={patch.name.value.additional}
+                  onChange={(event) =>
+                    onPatchChange((current) => ({
+                      ...current,
+                      name: {
+                        ...current.name,
+                        value: {
+                          ...current.name.value,
+                          additional: event.currentTarget.value,
+                        },
+                      },
+                    }))
+                  }
+                />
+              </FieldGroup>
+              <FieldGroup label="Prefix">
+                <input
+                  value={patch.name.value.prefix}
+                  onChange={(event) =>
+                    onPatchChange((current) => ({
+                      ...current,
+                      name: {
+                        ...current.name,
+                        value: {
+                          ...current.name.value,
+                          prefix: event.currentTarget.value,
+                        },
+                      },
+                    }))
+                  }
+                />
+              </FieldGroup>
+              <FieldGroup label="Suffix">
+                <input
+                  value={patch.name.value.suffix}
+                  onChange={(event) =>
+                    onPatchChange((current) => ({
+                      ...current,
+                      name: {
+                        ...current.name,
+                        value: {
+                          ...current.name.value,
+                          suffix: event.currentTarget.value,
+                        },
+                      },
+                    }))
+                  }
+                />
+              </FieldGroup>
+            </div>
+          ) : null}
+        </SectionCard>
+
+        <PatchTextField
+          label="Nicknames"
+          hint="Replace or append comma-separated nicknames."
+          mode={patch.nicknames.mode}
+          value={patch.nicknames.value.join(", ")}
+          list
+          onModeChange={(mode) =>
+            onPatchChange((current) => ({
+              ...current,
+              nicknames: {
+                ...current.nicknames,
+                mode,
+              },
+            }))
+          }
+          onValueChange={(value) =>
+            onPatchChange((current) => ({
+              ...current,
+              nicknames: {
+                ...current.nicknames,
+                value: splitCommaSeparated(value),
+              },
+            }))
+          }
+        />
+
+        <PatchTextField
+          label="Organization"
+          hint="Replace or append semicolon-separated organization units."
+          mode={patch.organizationUnits.mode}
+          value={patch.organizationUnits.value.join("; ")}
+          list
+          onModeChange={(mode) =>
+            onPatchChange((current) => ({
+              ...current,
+              organizationUnits: {
+                ...current.organizationUnits,
+                mode,
+              },
+            }))
+          }
+          onValueChange={(value) =>
+            onPatchChange((current) => ({
+              ...current,
+              organizationUnits: {
+                ...current.organizationUnits,
+                value: splitSemicolonSeparated(value),
+              },
+            }))
+          }
+        />
+
+        <PatchTextField
+          label="Title"
+          hint="Replace or clear the title."
+          mode={patch.title.mode}
+          value={patch.title.value}
+          onModeChange={(mode) =>
+            onPatchChange((current) => ({
+              ...current,
+              title: {
+                ...current.title,
+                mode,
+              },
+            }))
+          }
+          onValueChange={(value) =>
+            onPatchChange((current) => ({
+              ...current,
+              title: {
+                ...current.title,
+                value,
+              },
+            }))
+          }
+        />
+
+        <PatchTextField
+          label="Role"
+          hint="Replace or clear the role."
+          mode={patch.role.mode}
+          value={patch.role.value}
+          onModeChange={(mode) =>
+            onPatchChange((current) => ({
+              ...current,
+              role: {
+                ...current.role,
+                mode,
+              },
+            }))
+          }
+          onValueChange={(value) =>
+            onPatchChange((current) => ({
+              ...current,
+              role: {
+                ...current.role,
+                value,
+              },
+            }))
+          }
+        />
+
+        <PatchTextField
+          label="Birthday"
+          hint="Replace or clear the birthday using YYYY-MM-DD."
+          mode={patch.birthday.mode}
+          value={patch.birthday.value}
+          type="date"
+          onModeChange={(mode) =>
+            onPatchChange((current) => ({
+              ...current,
+              birthday: {
+                ...current.birthday,
+                mode,
+              },
+            }))
+          }
+          onValueChange={(value) =>
+            onPatchChange((current) => ({
+              ...current,
+              birthday: {
+                ...current.birthday,
+                value,
+              },
+            }))
+          }
+        />
+
+        <PatchTextField
+          label="Anniversary"
+          hint="Replace or clear the anniversary using YYYY-MM-DD."
+          mode={patch.anniversary.mode}
+          value={patch.anniversary.value}
+          type="date"
+          onModeChange={(mode) =>
+            onPatchChange((current) => ({
+              ...current,
+              anniversary: {
+                ...current.anniversary,
+                mode,
+              },
+            }))
+          }
+          onValueChange={(value) =>
+            onPatchChange((current) => ({
+              ...current,
+              anniversary: {
+                ...current.anniversary,
+                value,
+              },
+            }))
+          }
+        />
+
+        <PatchPhotoField
+          patch={patch}
+          onChoosePhoto={onChoosePhoto}
+          onModeChange={(mode) =>
+            onPatchChange((current) => ({
+              ...current,
+              photo: {
+                ...current.photo,
+                mode,
+                value: mode === "clear" ? null : current.photo.value,
+              },
+            }))
+          }
+          onClearPhoto={() =>
+            onPatchChange((current) => ({
+              ...current,
+              photo: {
+                mode: "clear",
+                value: null,
+              },
+            }))
+          }
+        />
+
+        <PatchContactSection
+          title="Email addresses"
+          description="Replace, append or clear email entries on all selected files."
+          entries={patch.emails.value}
+          mode={patch.emails.mode}
+          kind="email"
+          addLabel="Add email"
+          placeholder="jane@company.com"
+          onModeChange={(mode) =>
+            onPatchChange((current) => ({
+              ...current,
+              emails: {
+                ...current.emails,
+                mode,
+              },
+            }))
+          }
+          onEntriesChange={(value) =>
+            onPatchChange((current) => ({
+              ...current,
+              emails: {
+                ...current.emails,
+                value,
+              },
+            }))
+          }
+        />
+
+        <PatchContactSection
+          title="Phone numbers"
+          description="Replace, append or clear phone entries on all selected files."
+          entries={patch.phones.value}
+          mode={patch.phones.mode}
+          kind="phone"
+          addLabel="Add phone"
+          placeholder="+49 151 23456789"
+          onModeChange={(mode) =>
+            onPatchChange((current) => ({
+              ...current,
+              phones: {
+                ...current.phones,
+                mode,
+              },
+            }))
+          }
+          onEntriesChange={(value) =>
+            onPatchChange((current) => ({
+              ...current,
+              phones: {
+                ...current.phones,
+                value,
+              },
+            }))
+          }
+        />
+
+        <PatchContactSection
+          title="URLs"
+          description="Replace, append or clear URL entries on all selected files."
+          entries={patch.urls.value}
+          mode={patch.urls.mode}
+          kind="url"
+          addLabel="Add URL"
+          placeholder="https://example.com"
+          onModeChange={(mode) =>
+            onPatchChange((current) => ({
+              ...current,
+              urls: {
+                ...current.urls,
+                mode,
+              },
+            }))
+          }
+          onEntriesChange={(value) =>
+            onPatchChange((current) => ({
+              ...current,
+              urls: {
+                ...current.urls,
+                value,
+              },
+            }))
+          }
+        />
+
+        <PatchContactSection
+          title="Instant messaging"
+          description="Replace, append or clear IM entries on all selected files."
+          entries={patch.impps.value}
+          mode={patch.impps.mode}
+          kind="impp"
+          addLabel="Add IM URI"
+          placeholder="xmpp:jane@example.com"
+          onModeChange={(mode) =>
+            onPatchChange((current) => ({
+              ...current,
+              impps: {
+                ...current.impps,
+                mode,
+              },
+            }))
+          }
+          onEntriesChange={(value) =>
+            onPatchChange((current) => ({
+              ...current,
+              impps: {
+                ...current.impps,
+                value,
+              },
+            }))
+          }
+        />
+
+        <PatchAddressSection
+          entries={patch.addresses.value}
+          mode={patch.addresses.mode}
+          onModeChange={(mode) =>
+            onPatchChange((current) => ({
+              ...current,
+              addresses: {
+                ...current.addresses,
+                mode,
+              },
+            }))
+          }
+          onEntriesChange={(value) =>
+            onPatchChange((current) => ({
+              ...current,
+              addresses: {
+                ...current.addresses,
+                value,
+              },
+            }))
+          }
+        />
+
+        <PatchTextField
+          label="Note"
+          hint="Replace or clear NOTE."
+          mode={patch.note.mode}
+          value={patch.note.value}
+          multiline
+          onModeChange={(mode) =>
+            onPatchChange((current) => ({
+              ...current,
+              note: {
+                ...current.note,
+                mode,
+              },
+            }))
+          }
+          onValueChange={(value) =>
+            onPatchChange((current) => ({
+              ...current,
+              note: {
+                ...current.note,
+                value,
+              },
+            }))
+          }
+        />
+
+        <PatchTextField
+          label="UID"
+          hint="Replace or clear UID across the selected files."
+          mode={patch.uid.mode}
+          value={patch.uid.value}
+          onModeChange={(mode) =>
+            onPatchChange((current) => ({
+              ...current,
+              uid: {
+                ...current.uid,
+                mode,
+              },
+            }))
+          }
+          onValueChange={(value) =>
+            onPatchChange((current) => ({
+              ...current,
+              uid: {
+                ...current.uid,
+                value,
+              },
+            }))
+          }
+        />
+
+        <PatchTextField
+          label="PRODID"
+          hint="Replace or clear PRODID across the selected files."
+          mode={patch.prodId.mode}
+          value={patch.prodId.value}
+          onModeChange={(mode) =>
+            onPatchChange((current) => ({
+              ...current,
+              prodId: {
+                ...current.prodId,
+                mode,
+              },
+            }))
+          }
+          onValueChange={(value) =>
+            onPatchChange((current) => ({
+              ...current,
+              prodId: {
+                ...current.prodId,
+                value,
+              },
+            }))
+          }
+        />
       </div>
-      {children}
-    </section>
+    </SectionCard>
   );
 }
 
-interface FieldGroupProps {
+interface PatchTextFieldProps {
   label: string;
-  hint?: string;
-  required?: boolean;
-  children: ReactNode;
+  hint: string;
+  value: string;
+  type?: "text" | "date";
+  multiline?: boolean;
+  onValueChange: (value: string) => void;
 }
+type ScalarPatchTextFieldProps = PatchTextFieldProps & {
+  list?: false;
+  mode: ScalarPatchMode;
+  onModeChange: (mode: ScalarPatchMode) => void;
+};
 
-interface FieldControlProps {
-  id?: string;
-  required?: boolean;
-  "aria-describedby"?: string;
-}
+type ListPatchTextFieldProps = PatchTextFieldProps & {
+  list: true;
+  mode: ListPatchMode;
+  onModeChange: (mode: ListPatchMode) => void;
+};
 
-function FieldGroup({ label, hint, required = false, children }: FieldGroupProps) {
-  const reactId = useId();
-  const controlId = `field-${reactId.replace(/:/gu, "")}`;
-  const hintId = hint ? `${controlId}-hint` : undefined;
+type PatchTextFieldComponentProps = ScalarPatchTextFieldProps | ListPatchTextFieldProps;
 
-  if (!isValidElement<FieldControlProps>(children)) {
+function PatchTextField({
+  label,
+  hint,
+  value,
+  type = "text",
+  list = false,
+  multiline = false,
+  onValueChange,
+  ...rest
+}: PatchTextFieldComponentProps) {
+  const content = multiline ? (
+    <textarea value={value} onChange={(event) => onValueChange(event.currentTarget.value)} rows={5} />
+  ) : (
+    <input type={type} value={value} onChange={(event) => onValueChange(event.currentTarget.value)} />
+  );
+
+  if (list) {
+    const { mode, onModeChange } = rest as ListPatchTextFieldProps;
+
     return (
-      <div className="field-group">
-        <span className="field-group__label">{label}</span>
-        {children}
-        {hint ? <span className="field-group__hint">{hint}</span> : null}
-      </div>
+      <SectionCard title={label} description={hint}>
+        <PatchModeToolbar
+          mode={mode}
+          modes={["keep", "replace", "append", "clear"] as const}
+          onChange={onModeChange}
+        />
+
+        {mode === "replace" || mode === "append" ? (
+          <FieldGroup label={label}>{content}</FieldGroup>
+        ) : null}
+      </SectionCard>
     );
   }
 
-  const describedBy = [children.props["aria-describedby"], hintId].filter(Boolean).join(" ") || undefined;
-  const resolvedControlId = children.props.id ?? controlId;
-  const control = cloneElement(children, {
-    id: resolvedControlId,
-    required: children.props.required ?? required,
-    "aria-describedby": describedBy,
-  });
+  const { mode, onModeChange } = rest as ScalarPatchTextFieldProps;
 
   return (
-    <div className="field-group">
-      <div className="field-group__header">
-        <label className="field-group__label" htmlFor={resolvedControlId}>
-          {label}
-        </label>
-        {required ? <span className="field-group__required">Required</span> : null}
-      </div>
-      {control}
-      {hint ? (
-        <span className="field-group__hint" id={hintId}>
-          {hint}
-        </span>
-      ) : null}
-    </div>
+    <SectionCard title={label} description={hint}>
+      <PatchModeToolbar
+        mode={mode}
+        modes={["keep", "replace", "clear"] as const}
+        onChange={onModeChange}
+      />
+
+      {mode === "replace" ? <FieldGroup label={label}>{content}</FieldGroup> : null}
+    </SectionCard>
   );
 }
 
-interface ContactSectionProps {
-  title: string;
-  description: string;
-  kind: ContactKind;
-  addLabel: string;
-  placeholder: string;
-  entries: ContactValue[];
-  onAdd: () => void;
-  onChange: (index: number, update: (entry: ContactValue) => ContactValue) => void;
-  onMove: (index: number, direction: -1 | 1) => void;
-  onRemove: (index: number) => void;
+interface PatchPhotoFieldProps {
+  patch: BatchPatch;
+  onChoosePhoto: () => void;
+  onModeChange: (mode: "keep" | "replace" | "clear") => void;
+  onClearPhoto: () => void;
 }
 
-function ContactSection({
+function PatchPhotoField({ patch, onChoosePhoto, onModeChange, onClearPhoto }: PatchPhotoFieldProps) {
+  return (
+    <SectionCard
+      title="Photo"
+      description="Keep, replace or clear the photo on all selected contacts."
+    >
+      <PatchModeToolbar
+        mode={patch.photo.mode}
+        modes={["keep", "replace", "clear"]}
+        onChange={onModeChange}
+      />
+
+      {patch.photo.mode === "replace" ? (
+        <div className="stack">
+          {patch.photo.value ? (
+            <div className="photo-frame">
+              <img
+                src={patch.photo.value.uri}
+                alt="Batch patch profile"
+                className="photo-frame__image"
+              />
+            </div>
+          ) : (
+            <p className="section-empty">No replacement image selected yet.</p>
+          )}
+          <div className="photo-meta__actions">
+            <button type="button" className="button button--ghost" onClick={onChoosePhoto}>
+              {patch.photo.value ? "Replace image" : "Choose image"}
+            </button>
+            <button
+              type="button"
+              className="button button--secondary"
+              onClick={onClearPhoto}
+              disabled={!patch.photo.value}
+            >
+              Clear selection
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </SectionCard>
+  );
+}
+
+interface PatchContactSectionProps {
+  title: string;
+  description: string;
+  entries: ContactValue[];
+  mode: ListPatchMode;
+  kind: "email" | "phone" | "url" | "impp";
+  addLabel: string;
+  placeholder: string;
+  onModeChange: (mode: ListPatchMode) => void;
+  onEntriesChange: (entries: ContactValue[]) => void;
+}
+
+function PatchContactSection({
   title,
   description,
+  entries,
+  mode,
   kind,
   addLabel,
   placeholder,
-  entries,
-  onAdd,
-  onChange,
-  onMove,
-  onRemove,
-}: ContactSectionProps) {
+  onModeChange,
+  onEntriesChange,
+}: PatchContactSectionProps) {
   return (
     <SectionCard title={title} description={description}>
-      <div className="section-card__toolbar">
-        <button type="button" className="button button--ghost" onClick={onAdd}>
-          {addLabel}
-        </button>
-      </div>
+      <PatchModeToolbar
+        mode={mode}
+        modes={["keep", "replace", "append", "clear"] as const}
+        onChange={onModeChange}
+      />
 
-      {entries.length === 0 ? (
-        <p className="section-empty">No entries yet.</p>
-      ) : (
-        <div className="stack">
-          {entries.map((entry, index) => (
-            <article className="entry-card" key={`${entry.group ?? "entry"}-${index}`}>
-              <div className="entry-card__toolbar">
-                <span className="entry-card__title">Entry {index + 1}</span>
-                <div className="entry-card__actions">
-                  <button
-                    type="button"
-                    className="icon-button"
-                    onClick={() => onMove(index, -1)}
-                    disabled={index === 0}
-                  >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-button"
-                    onClick={() => onMove(index, 1)}
-                    disabled={index === entries.length - 1}
-                  >
-                    ↓
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-button icon-button--danger"
-                    onClick={() => onRemove(index)}
-                  >
-                    Remove
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid--two">
-                <FieldGroup label="Value" hint={getContactValueHint(kind)}>
-                  <input
-                    {...getContactValueInputProps(kind)}
-                    value={entry.value}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      onChange(index, (current) => ({
-                        ...current,
-                        value,
-                      }));
-                    }}
-                    placeholder={placeholder}
-                  />
-                </FieldGroup>
-                <FieldGroup label="Types" hint={getContactTypeHint(kind)}>
-                  <input
-                    value={entry.types.join(", ")}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      onChange(index, (current) => ({
-                        ...current,
-                        types: splitTypeList(value),
-                      }));
-                    }}
-                    placeholder={getContactTypePlaceholder(kind)}
-                    autoCapitalize="off"
-                    autoCorrect="off"
-                    spellCheck={false}
-                  />
-                </FieldGroup>
-                <FieldGroup label="Label" hint="Optional human-readable display label.">
-                  <input
-                    value={entry.label ?? ""}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      onChange(index, (current) => ({
-                        ...current,
-                        label: emptyToUndefined(value),
-                      }));
-                    }}
-                    placeholder="Optional display label"
-                    autoComplete="off"
-                  />
-                </FieldGroup>
-                <FieldGroup label="Preference" hint="Optional positive number. Lower means more preferred.">
-                  <input
-                    type="number"
-                    min="1"
-                    step="1"
-                    inputMode="numeric"
-                    value={entry.pref ?? ""}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      onChange(index, (current) => ({
-                        ...current,
-                        pref: parseOptionalNumber(value),
-                      }));
-                    }}
-                    placeholder="1"
-                  />
-                </FieldGroup>
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
+      {mode === "replace" || mode === "append" ? (
+        <ContactSection
+          title={title}
+          description={description}
+          kind={kind}
+          addLabel={addLabel}
+          placeholder={placeholder}
+          entries={entries}
+          onAdd={() => onEntriesChange([...entries, createEmptyContactValue()])}
+          onChange={(index, update) =>
+            onEntriesChange(entries.map((entry, entryIndex) => (entryIndex === index ? update(entry) : entry)))
+          }
+          onMove={(index, direction) => onEntriesChange(moveItem(entries, index, direction))}
+          onRemove={(index) => onEntriesChange(entries.filter((_, entryIndex) => entryIndex !== index))}
+        />
+      ) : null}
     </SectionCard>
   );
 }
 
-interface AddressSectionProps {
+interface PatchAddressSectionProps {
   entries: AddressValue[];
-  onAdd: () => void;
-  onChange: (index: number, update: (entry: AddressValue) => AddressValue) => void;
-  onMove: (index: number, direction: -1 | 1) => void;
-  onRemove: (index: number) => void;
+  mode: ListPatchMode;
+  onModeChange: (mode: ListPatchMode) => void;
+  onEntriesChange: (entries: AddressValue[]) => void;
 }
 
-function AddressSection({ entries, onAdd, onChange, onMove, onRemove }: AddressSectionProps) {
+function PatchAddressSection({
+  entries,
+  mode,
+  onModeChange,
+  onEntriesChange,
+}: PatchAddressSectionProps) {
   return (
     <SectionCard
       title="Addresses"
-      description="Structured ADR fields for postal or office addresses."
+      description="Replace, append or clear address entries on all selected files."
     >
-      <div className="section-card__toolbar">
-        <button type="button" className="button button--ghost" onClick={onAdd}>
-          Add address
-        </button>
-      </div>
+      <PatchModeToolbar
+        mode={mode}
+        modes={["keep", "replace", "append", "clear"] as const}
+        onChange={onModeChange}
+      />
 
-      {entries.length === 0 ? (
-        <p className="section-empty">No addresses yet.</p>
-      ) : (
-        <div className="stack">
-          {entries.map((entry, index) => (
-            <article className="entry-card" key={`${entry.group ?? "address"}-${index}`}>
-              <div className="entry-card__toolbar">
-                <span className="entry-card__title">Address {index + 1}</span>
-                <div className="entry-card__actions">
-                  <button
-                    type="button"
-                    className="icon-button"
-                    onClick={() => onMove(index, -1)}
-                    disabled={index === 0}
-                  >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-button"
-                    onClick={() => onMove(index, 1)}
-                    disabled={index === entries.length - 1}
-                  >
-                    ↓
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-button icon-button--danger"
-                    onClick={() => onRemove(index)}
-                  >
-                    Remove
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid--two">
-                <FieldGroup label="Street" hint="House number and street name.">
-                  <input
-                    value={entry.street}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      onChange(index, (current) => ({
-                        ...current,
-                        street: value,
-                      }));
-                    }}
-                    placeholder="Example street 5"
-                    autoComplete="address-line1"
-                    autoCapitalize="words"
-                  />
-                </FieldGroup>
-                <FieldGroup label="City" hint="Town or city.">
-                  <input
-                    value={entry.locality}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      onChange(index, (current) => ({
-                        ...current,
-                        locality: value,
-                      }));
-                    }}
-                    placeholder="Berlin"
-                    autoComplete="address-level2"
-                    autoCapitalize="words"
-                  />
-                </FieldGroup>
-                <FieldGroup label="Region" hint="State, region or province.">
-                  <input
-                    value={entry.region}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      onChange(index, (current) => ({
-                        ...current,
-                        region: value,
-                      }));
-                    }}
-                    placeholder="Berlin"
-                    autoComplete="address-level1"
-                    autoCapitalize="words"
-                  />
-                </FieldGroup>
-                <FieldGroup label="Postal code" hint="ZIP or postal code.">
-                  <input
-                    value={entry.postalCode}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      onChange(index, (current) => ({
-                        ...current,
-                        postalCode: value,
-                      }));
-                    }}
-                    placeholder="10115"
-                    autoComplete="postal-code"
-                  />
-                </FieldGroup>
-                <FieldGroup label="Country" hint="Country name, not ISO code.">
-                  <input
-                    value={entry.country}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      onChange(index, (current) => ({
-                        ...current,
-                        country: value,
-                      }));
-                    }}
-                    placeholder="Germany"
-                    autoComplete="country-name"
-                    autoCapitalize="words"
-                  />
-                </FieldGroup>
-                <FieldGroup label="PO Box" hint="Optional post office box.">
-                  <input
-                    value={entry.poBox}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      onChange(index, (current) => ({
-                        ...current,
-                        poBox: value,
-                      }));
-                    }}
-                    placeholder="Optional"
-                    autoCapitalize="words"
-                  />
-                </FieldGroup>
-                <FieldGroup label="Extended address" hint="Apartment, floor or building details.">
-                  <input
-                    value={entry.extended}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      onChange(index, (current) => ({
-                        ...current,
-                        extended: value,
-                      }));
-                    }}
-                    placeholder="Floor, suite or building"
-                    autoComplete="address-line2"
-                    autoCapitalize="words"
-                  />
-                </FieldGroup>
-                <FieldGroup
-                  label="Types"
-                  hint="Comma separated, for example work, home or postal."
-                >
-                  <input
-                    value={entry.types.join(", ")}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      onChange(index, (current) => ({
-                        ...current,
-                        types: splitTypeList(value),
-                      }));
-                    }}
-                    placeholder="work, postal"
-                    autoCapitalize="off"
-                    autoCorrect="off"
-                    spellCheck={false}
-                  />
-                </FieldGroup>
-                <FieldGroup label="Label" hint="Optional display label for this address.">
-                  <input
-                    value={entry.label ?? ""}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      onChange(index, (current) => ({
-                        ...current,
-                        label: emptyToUndefined(value),
-                      }));
-                    }}
-                    placeholder="Optional display label"
-                    autoComplete="off"
-                  />
-                </FieldGroup>
-                <FieldGroup label="Preference" hint="Optional positive number. Lower means more preferred.">
-                  <input
-                    type="number"
-                    min="1"
-                    step="1"
-                    inputMode="numeric"
-                    value={entry.pref ?? ""}
-                    onChange={(event) => {
-                      const value = event.currentTarget.value;
-                      onChange(index, (current) => ({
-                        ...current,
-                        pref: parseOptionalNumber(value),
-                      }));
-                    }}
-                    placeholder="1"
-                  />
-                </FieldGroup>
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
+      {mode === "replace" || mode === "append" ? (
+        <AddressSection
+          entries={entries}
+          onAdd={() => onEntriesChange([...entries, createEmptyAddressValue()])}
+          onChange={(index, update) =>
+            onEntriesChange(entries.map((entry, entryIndex) => (entryIndex === index ? update(entry) : entry)))
+          }
+          onMove={(index, direction) => onEntriesChange(moveItem(entries, index, direction))}
+          onRemove={(index) => onEntriesChange(entries.filter((_, entryIndex) => entryIndex !== index))}
+        />
+      ) : null}
     </SectionCard>
   );
 }
 
-interface ValidationListProps {
-  parseWarnings: string[];
-  issues: ValidationIssue[];
-  unknownPropertyCount: number;
+interface PatchModeToolbarProps<TMode extends string> {
+  mode: TMode;
+  modes: readonly TMode[];
+  onChange: (mode: TMode) => void;
 }
 
-interface MetadataItemProps {
-  label: string;
-  value: string;
-}
-
-function MetadataItem({ label, value }: MetadataItemProps) {
+function PatchModeToolbar<TMode extends string>({
+  mode,
+  modes,
+  onChange,
+}: PatchModeToolbarProps<TMode>) {
   return (
-    <div className="metadata-item">
-      <span className="metadata-item__label">{label}</span>
-      <code className="metadata-item__value">{value}</code>
+    <div className="patch-mode-toolbar">
+      <FieldGroup
+        label="Patch mode"
+        hint="Keep leaves the field untouched. Replace or append uses the values below."
+      >
+        <select value={mode} onChange={(event) => onChange(event.currentTarget.value as TMode)}>
+          {modes.map((candidate) => (
+            <option key={candidate} value={candidate}>
+              {candidate}
+            </option>
+          ))}
+        </select>
+      </FieldGroup>
     </div>
   );
 }
 
-function ValidationList({ parseWarnings, issues, unknownPropertyCount }: ValidationListProps) {
-  const hasEntries = parseWarnings.length > 0 || issues.length > 0;
+function createEmptyBatchWorkspace(): BatchWorkspace {
+  return {
+    items: [],
+    selectedIds: [],
+    search: "",
+    patch: createEmptyBatchPatch(),
+    preview: null,
+    writeMode: "in-place",
+    outputDirectory: null,
+  };
+}
 
-  return (
-    <div className="validation-list">
-      <div className="validation-summary">
-        <div className="summary-chip">
-          <span>Errors</span>
-          <strong>{issues.filter((issue) => issue.level === "error").length}</strong>
-        </div>
-        <div className="summary-chip">
-          <span>Warnings</span>
-          <strong>{parseWarnings.length + issues.filter((issue) => issue.level === "warning").length}</strong>
-        </div>
-        <div className="summary-chip">
-          <span>Unknown props</span>
-          <strong>{unknownPropertyCount}</strong>
-        </div>
-      </div>
-
-      {!hasEntries ? (
-        <p className="section-empty">No validation issues so far.</p>
-      ) : (
-        <div className="stack">
-          {parseWarnings.map((warning, index) => (
-            <article className="issue issue--warning" key={`parse-warning-${index}`}>
-              <span className="issue__badge">Import warning</span>
-              <p>{warning}</p>
-            </article>
-          ))}
-
-          {issues.map((issue) => (
-            <article
-              className={`issue issue--${issue.level}`}
-              key={`${issue.field}-${issue.message}`}
-            >
-              <span className="issue__badge">{issue.level}</span>
-              <div>
-                <strong>{formatField(issue.field)}</strong>
-                <p>{issue.message}</p>
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
-    </div>
-  );
+function createDocumentController(
+  updateDocument: (update: (document: VCardDocument) => VCardDocument) => void,
+  choosePhoto: () => void,
+  removePhoto: () => void,
+): DocumentEditorController {
+  return {
+    updateTextField: (field, value) =>
+      updateDocument((current) => ({
+        ...current,
+        [field]: value,
+      })),
+    updateStructuredNameField: (field, value) =>
+      updateDocument((current) => ({
+        ...current,
+        name: {
+          ...current.name,
+          [field]: value,
+        },
+      })),
+    updateNicknames: (value) =>
+      updateDocument((current) => ({
+        ...current,
+        nicknames: splitCommaSeparated(value),
+      })),
+    updateOrganization: (value) =>
+      updateDocument((current) => ({
+        ...current,
+        organizationUnits: splitSemicolonSeparated(value),
+      })),
+    addContactEntry: (listKey) =>
+      updateDocument((current) => ({
+        ...current,
+        [listKey]: [...current[listKey], createEmptyContactValue()],
+      })),
+    updateContactEntry: (listKey, index, update) =>
+      updateDocument((current) => ({
+        ...current,
+        [listKey]: current[listKey].map((entry, entryIndex) =>
+          entryIndex === index ? update(entry) : entry,
+        ),
+      })),
+    moveContactEntry: (listKey, index, direction) =>
+      updateDocument((current) => ({
+        ...current,
+        [listKey]: moveItem(current[listKey], index, direction),
+      })),
+    removeContactEntry: (listKey, index) =>
+      updateDocument((current) => ({
+        ...current,
+        [listKey]: current[listKey].filter((_, entryIndex) => entryIndex !== index),
+      })),
+    addAddressEntry: () =>
+      updateDocument((current) => ({
+        ...current,
+        addresses: [...current.addresses, createEmptyAddressValue()],
+      })),
+    updateAddressEntry: (index, update) =>
+      updateDocument((current) => ({
+        ...current,
+        addresses: current.addresses.map((entry, entryIndex) =>
+          entryIndex === index ? update(entry) : entry,
+        ),
+      })),
+    moveAddressEntry: (index, direction) =>
+      updateDocument((current) => ({
+        ...current,
+        addresses: moveItem(current.addresses, index, direction),
+      })),
+    removeAddressEntry: (index) =>
+      updateDocument((current) => ({
+        ...current,
+        addresses: current.addresses.filter((_, entryIndex) => entryIndex !== index),
+      })),
+    choosePhoto,
+    removePhoto,
+  };
 }
 
 function moveItem<T>(items: T[], index: number, direction: -1 | 1): T[] {
@@ -1429,13 +2211,6 @@ function splitCommaSeparated(value: string): string[] {
     .filter(Boolean);
 }
 
-function splitTypeList(value: string): string[] {
-  return value
-    .split(",")
-    .map((part) => part.trim().toLowerCase())
-    .filter(Boolean);
-}
-
 function splitSemicolonSeparated(value: string): string[] {
   return value
     .split(";")
@@ -1443,18 +2218,34 @@ function splitSemicolonSeparated(value: string): string[] {
     .filter(Boolean);
 }
 
-function parseOptionalNumber(value: string): number | undefined {
-  if (!value.trim()) {
-    return undefined;
+function mergeBatchItems(existingItems: BatchItem[], newItems: BatchItem[]): BatchItem[] {
+  const itemMap = new Map(existingItems.map((item) => [item.id, item]));
+
+  for (const item of newItems) {
+    itemMap.set(item.id, item);
   }
 
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+  return Array.from(itemMap.values()).sort((left, right) =>
+    left.sourcePath.localeCompare(right.sourcePath),
+  );
 }
 
-function emptyToUndefined(value: string): string | undefined {
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
+function matchesBatchSearch(item: BatchItem, query: string): boolean {
+  if (!query.trim()) {
+    return true;
+  }
+
+  const loweredQuery = query.trim().toLowerCase();
+  const document = item.document;
+  return [
+    item.sourcePath,
+    document?.formattedName,
+    document?.organizationUnits.join(" "),
+    document?.title,
+    document?.role,
+  ]
+    .filter(Boolean)
+    .some((value) => value?.toLowerCase().includes(loweredQuery));
 }
 
 function readFileAsPhotoValue(file: File): Promise<PhotoValue> {
@@ -1487,85 +2278,6 @@ function inferMediaTypeFromDataUri(value: string): string | undefined {
   return match?.[1]?.toLowerCase();
 }
 
-function getContactValueHint(kind: ContactKind): string {
-  switch (kind) {
-    case "email":
-      return "Use one full email address, for example jane@example.com.";
-    case "phone":
-      return "Use one phone number. International format is safest.";
-    case "url":
-      return "Use a full URL including the scheme, for example https://.";
-    case "impp":
-      return "Use one messaging URI, for example sip:, xmpp:, im: or msteams:.";
-  }
-}
-
-function getContactTypeHint(kind: ContactKind): string {
-  switch (kind) {
-    case "email":
-      return "Comma separated, for example work, home or internet.";
-    case "phone":
-      return "Comma separated, for example cell, work, home or fax.";
-    case "url":
-      return "Comma separated, for example work, profile or booking.";
-    case "impp":
-      return "Comma separated, for example work, chat, home or support.";
-  }
-}
-
-function getContactTypePlaceholder(kind: ContactKind): string {
-  switch (kind) {
-    case "email":
-      return "work, home";
-    case "phone":
-      return "cell, work";
-    case "url":
-      return "work, profile";
-    case "impp":
-      return "work, chat";
-  }
-}
-
-function getContactValueInputProps(kind: ContactKind) {
-  switch (kind) {
-    case "email":
-      return {
-        type: "email" as const,
-        inputMode: "email" as const,
-        autoComplete: "email",
-        autoCapitalize: "off" as const,
-        autoCorrect: "off" as const,
-        spellCheck: false,
-      };
-    case "phone":
-      return {
-        type: "tel" as const,
-        inputMode: "tel" as const,
-        autoComplete: "tel",
-        autoCorrect: "off" as const,
-        spellCheck: false,
-      };
-    case "url":
-      return {
-        type: "url" as const,
-        inputMode: "url" as const,
-        autoComplete: "url",
-        autoCapitalize: "off" as const,
-        autoCorrect: "off" as const,
-        spellCheck: false,
-      };
-    case "impp":
-      return {
-        type: "text" as const,
-        inputMode: "url" as const,
-        autoComplete: "off",
-        autoCapitalize: "off" as const,
-        autoCorrect: "off" as const,
-        spellCheck: false,
-      };
-  }
-}
-
 function buildSuggestedPath(sourcePath: string | null, document: VCardDocument): string {
   if (sourcePath) {
     return sourcePath;
@@ -1579,26 +2291,6 @@ function buildSuggestedPath(sourcePath: string | null, document: VCardDocument):
       .replace(/^-+|-+$/gu, "") || "contact";
 
   return `${slug}.vcf`;
-}
-
-function formatField(field: string): string {
-  if (field === "formattedName") {
-    return "Formatted name";
-  }
-
-  if (field === "name") {
-    return "Structured name";
-  }
-
-  if (field === "birthday") {
-    return "Birthday";
-  }
-
-  if (field === "anniversary") {
-    return "Anniversary";
-  }
-
-  return field.replace(/\./gu, " / ");
 }
 
 function isTauriRuntime(): boolean {

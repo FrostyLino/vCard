@@ -54,6 +54,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -63,6 +64,7 @@ button {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   border: 1px solid var(--border);
@@ -77,6 +79,7 @@ textarea {
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   outline: none;
   border-color: rgba(26, 107, 99, 0.48);
@@ -224,6 +227,36 @@ textarea {
   gap: 0.7rem;
   flex-wrap: wrap;
   justify-content: flex-end;
+  align-items: center;
+}
+
+.mode-tabs {
+  display: inline-flex;
+  padding: 0.24rem;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+.mode-tab {
+  border: 0;
+  border-radius: 14px;
+  padding: 0.72rem 1rem;
+  background: transparent;
+  color: var(--text-muted);
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.mode-tab:hover {
+  transform: none;
+  color: var(--text-strong);
+}
+
+.mode-tab--active {
+  background: linear-gradient(180deg, rgba(26, 107, 99, 0.12), rgba(15, 81, 75, 0.16));
+  color: var(--teal-deep);
 }
 
 .button,
@@ -312,6 +345,10 @@ textarea {
   gap: 1.25rem;
   grid-template-columns: minmax(0, 1.3fr) minmax(340px, 0.74fr);
   align-items: start;
+}
+
+.workspace--batch {
+  grid-template-columns: minmax(0, 1.55fr) minmax(360px, 0.9fr);
 }
 
 .editor-column,
@@ -479,6 +516,139 @@ textarea {
   border-radius: 18px;
   color: var(--text-muted);
   background: rgba(255, 255, 255, 0.4);
+}
+
+.batch-toolbar {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: auto minmax(280px, 1fr);
+  align-items: end;
+  margin-bottom: 1rem;
+}
+
+.batch-toolbar__actions {
+  display: flex;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+
+.batch-toolbar__search {
+  min-width: 0;
+}
+
+.batch-table-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.batch-table-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.batch-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.batch-select-all input {
+  width: auto;
+}
+
+.batch-counter {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.batch-table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.batch-table th,
+.batch-table td {
+  padding: 0.9rem 0.95rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid rgba(33, 61, 61, 0.08);
+}
+
+.batch-table th {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: rgba(248, 244, 236, 0.88);
+}
+
+.batch-table td:first-child,
+.batch-table th:first-child {
+  width: 5rem;
+}
+
+.batch-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.batch-table__row {
+  transition: background-color 160ms ease;
+}
+
+.batch-table__row:hover {
+  background: rgba(26, 107, 99, 0.05);
+}
+
+.batch-table__row--selected {
+  background: rgba(26, 107, 99, 0.08);
+}
+
+.batch-table__row input[type="checkbox"] {
+  width: auto;
+}
+
+.batch-status-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.batch-status-text,
+.batch-output-label {
+  color: var(--text-muted);
+  font-size: 0.84rem;
+}
+
+.batch-output-row,
+.batch-apply-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.batch-output-row {
+  justify-content: space-between;
+}
+
+.batch-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.patch-mode-toolbar {
+  margin-bottom: 1rem;
 }
 
 .validation-summary {
@@ -649,6 +819,11 @@ textarea {
   .header-actions {
     justify-content: flex-start;
   }
+
+  .workspace--batch,
+  .batch-toolbar {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 760px) {
@@ -673,6 +848,18 @@ textarea {
   .status-bar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .batch-table-actions,
+  .batch-output-row,
+  .batch-apply-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .batch-table {
+    display: block;
+    overflow-x: auto;
   }
 
   .entry-card__toolbar {
