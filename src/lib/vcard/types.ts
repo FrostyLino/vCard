@@ -57,12 +57,19 @@ export interface VCardDocument {
   nicknames: string[];
   organizationUnits: string[];
   title: string;
+  role: string;
+  birthday: string;
+  anniversary: string;
   photo: PhotoValue | null;
   emails: ContactValue[];
   phones: ContactValue[];
   urls: ContactValue[];
+  impps: ContactValue[];
   addresses: AddressValue[];
   note: string;
+  uid: string;
+  rev: string;
+  prodId: string;
   unknownProperties: UnknownProperty[];
 }
 

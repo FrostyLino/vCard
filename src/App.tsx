@@ -16,6 +16,7 @@ import {
   createEmptyDocument,
   parseVcf,
   serializeVcf,
+  touchManagedMetadata,
   validateVCardDocument,
   type AddressValue,
   type ContactValue,
@@ -32,7 +33,7 @@ interface EditorSession {
   parseWarnings: string[];
 }
 
-type ContactKind = "email" | "phone" | "url";
+type ContactKind = "email" | "phone" | "url" | "impp";
 
 function App() {
   const [session, setSession] = useState<EditorSession | null>(null);
@@ -152,7 +153,7 @@ function App() {
       return;
     }
 
-    const draft = createEmptyDocument("4.0");
+    const draft = touchManagedMetadata(createEmptyDocument("4.0"));
     setSession({
       document: draft,
       sourcePath: null,
@@ -347,13 +348,16 @@ function App() {
       current
         ? {
             ...current,
-            document: update(current.document),
+            document: touchManagedMetadata(update(current.document)),
           }
         : current,
     );
   }
 
-  function updateTextField(field: "formattedName" | "title" | "note", value: string) {
+  function updateTextField(
+    field: "formattedName" | "title" | "role" | "birthday" | "anniversary" | "note",
+    value: string,
+  ) {
     updateDocument((document) => ({
       ...document,
       [field]: value,
@@ -387,7 +391,7 @@ function App() {
     }));
   }
 
-  function addContactEntry(listKey: "emails" | "phones" | "urls") {
+  function addContactEntry(listKey: "emails" | "phones" | "urls" | "impps") {
     updateDocument((document) => ({
       ...document,
       [listKey]: [...document[listKey], createEmptyContactValue()],
@@ -395,7 +399,7 @@ function App() {
   }
 
   function updateContactEntry(
-    listKey: "emails" | "phones" | "urls",
+    listKey: "emails" | "phones" | "urls" | "impps",
     index: number,
     update: (entry: ContactValue) => ContactValue,
   ) {
@@ -407,7 +411,10 @@ function App() {
     }));
   }
 
-  function removeContactEntry(listKey: "emails" | "phones" | "urls", index: number) {
+  function removeContactEntry(
+    listKey: "emails" | "phones" | "urls" | "impps",
+    index: number,
+  ) {
     updateDocument((document) => ({
       ...document,
       [listKey]: document[listKey].filter((_, entryIndex) => entryIndex !== index),
@@ -415,7 +422,7 @@ function App() {
   }
 
   function moveContactEntry(
-    listKey: "emails" | "phones" | "urls",
+    listKey: "emails" | "phones" | "urls" | "impps",
     index: number,
     direction: -1 | 1,
   ) {
@@ -715,7 +722,7 @@ function App() {
 
             <SectionCard
               title="Professional"
-              description="Lightweight company and title fields."
+              description="Company details plus title and role."
             >
               <div className="grid grid--two">
                 <FieldGroup label="Organization" hint="Use semicolons to separate units">
@@ -734,6 +741,48 @@ function App() {
                     placeholder="Design Lead"
                     autoComplete="organization-title"
                     autoCapitalize="words"
+                  />
+                </FieldGroup>
+                <FieldGroup
+                  label="Role"
+                  hint="Functional role in the organization, separate from the title."
+                >
+                  <input
+                    value={session.document.role}
+                    onChange={(event) => updateTextField("role", event.currentTarget.value)}
+                    placeholder="Primary client contact"
+                    autoComplete="off"
+                    autoCapitalize="words"
+                  />
+                </FieldGroup>
+              </div>
+            </SectionCard>
+
+            <SectionCard
+              title="Dates"
+              description="Optional structured contact dates using the YYYY-MM-DD format."
+            >
+              <div className="grid grid--two">
+                <FieldGroup
+                  label="Birthday"
+                  hint="Use a full date such as 1988-04-12 for the best interoperability."
+                >
+                  <input
+                    type="date"
+                    value={session.document.birthday}
+                    onChange={(event) => updateTextField("birthday", event.currentTarget.value)}
+                    placeholder="1988-04-12"
+                  />
+                </FieldGroup>
+                <FieldGroup
+                  label="Anniversary"
+                  hint="Use a full date such as 2018-09-01 if you want to store it explicitly."
+                >
+                  <input
+                    type="date"
+                    value={session.document.anniversary}
+                    onChange={(event) => updateTextField("anniversary", event.currentTarget.value)}
+                    placeholder="2018-09-01"
                   />
                 </FieldGroup>
               </div>
@@ -778,6 +827,19 @@ function App() {
               onRemove={(index) => removeContactEntry("urls", index)}
             />
 
+            <ContactSection
+              title="Instant messaging"
+              description="Use complete messaging URIs such as sip:, xmpp:, im: or msteams:."
+              kind="impp"
+              addLabel="Add IM URI"
+              entries={session.document.impps}
+              placeholder="xmpp:jane@example.com"
+              onAdd={() => addContactEntry("impps")}
+              onChange={(index, update) => updateContactEntry("impps", index, update)}
+              onMove={(index, direction) => moveContactEntry("impps", index, direction)}
+              onRemove={(index) => removeContactEntry("impps", index)}
+            />
+
             <AddressSection
               entries={session.document.addresses}
               onAdd={addAddressEntry}
@@ -812,6 +874,17 @@ function App() {
                 issues={validationIssues}
                 unknownPropertyCount={session.document.unknownProperties.length}
               />
+            </SectionCard>
+
+            <SectionCard
+              title="Managed metadata"
+              description="Generated identifiers and revision data that stay inside the vCard."
+            >
+              <div className="metadata-list">
+                <MetadataItem label="UID" value={session.document.uid || "Not set yet"} />
+                <MetadataItem label="REV" value={session.document.rev || "Not set yet"} />
+                <MetadataItem label="PRODID" value={session.document.prodId || "Not set yet"} />
+              </div>
             </SectionCard>
 
             <SectionCard
@@ -1264,6 +1337,20 @@ interface ValidationListProps {
   unknownPropertyCount: number;
 }
 
+interface MetadataItemProps {
+  label: string;
+  value: string;
+}
+
+function MetadataItem({ label, value }: MetadataItemProps) {
+  return (
+    <div className="metadata-item">
+      <span className="metadata-item__label">{label}</span>
+      <code className="metadata-item__value">{value}</code>
+    </div>
+  );
+}
+
 function ValidationList({ parseWarnings, issues, unknownPropertyCount }: ValidationListProps) {
   const hasEntries = parseWarnings.length > 0 || issues.length > 0;
 
@@ -1398,6 +1485,8 @@ function getContactValueHint(kind: ContactKind): string {
       return "Use one phone number. International format is safest.";
     case "url":
       return "Use a full URL including the scheme, for example https://.";
+    case "impp":
+      return "Use one messaging URI, for example sip:, xmpp:, im: or msteams:.";
   }
 }
 
@@ -1409,6 +1498,8 @@ function getContactTypeHint(kind: ContactKind): string {
       return "Comma separated, for example cell, work, home or fax.";
     case "url":
       return "Comma separated, for example work, profile or booking.";
+    case "impp":
+      return "Comma separated, for example work, chat, home or support.";
   }
 }
 
@@ -1420,6 +1511,8 @@ function getContactTypePlaceholder(kind: ContactKind): string {
       return "cell, work";
     case "url":
       return "work, profile";
+    case "impp":
+      return "work, chat";
   }
 }
 
@@ -1451,6 +1544,15 @@ function getContactValueInputProps(kind: ContactKind) {
         autoCorrect: "off" as const,
         spellCheck: false,
       };
+    case "impp":
+      return {
+        type: "text" as const,
+        inputMode: "url" as const,
+        autoComplete: "off",
+        autoCapitalize: "off" as const,
+        autoCorrect: "off" as const,
+        spellCheck: false,
+      };
   }
 }
 
@@ -1476,6 +1578,14 @@ function formatField(field: string): string {
 
   if (field === "name") {
     return "Structured name";
+  }
+
+  if (field === "birthday") {
+    return "Birthday";
+  }
+
+  if (field === "anniversary") {
+    return "Anniversary";
   }
 
   return field.replace(/\./gu, " / ");

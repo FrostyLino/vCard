@@ -52,6 +52,7 @@ describe("serializeVcf", () => {
 
     expect(serialized).toContain("PHOTO;VALUE=uri:https://example.com/photo.jpg");
     expect(serialized).toContain("TEL;TYPE=PREF,CELL:+49 151 1234567");
+    expect(serialized).toContain("N:Legacy Contact;;;;");
   });
 
   it("skips empty optional rows, folds long values and preserves unknown properties", () => {
@@ -102,5 +103,32 @@ describe("serializeVcf", () => {
     expect(serializeVcf(document)).toContain(
       'PHOTO;MEDIATYPE="image/png":https://example.com/photo.png',
     );
+  });
+
+  it("serializes business-card fields, IMPP entries and managed metadata", () => {
+    const document = createEmptyDocument("4.0");
+    document.formattedName = "Jane Doe";
+    document.role = "Primary client contact";
+    document.birthday = "1988-04-12";
+    document.anniversary = "2018-09-01";
+    document.impps.push({
+      value: "sip:jane@example.com",
+      types: ["work", "chat"],
+      pref: 1,
+      extraParams: [],
+    });
+    document.uid = "urn:uuid:12345678-1234-4234-9234-123456789abc";
+    document.rev = "2026-03-22T10:11:12Z";
+    document.prodId = "-//vCard Editor//EN";
+
+    const serialized = serializeVcf(document);
+
+    expect(serialized).toContain("PRODID:-//vCard Editor//EN");
+    expect(serialized).toContain("ROLE:Primary client contact");
+    expect(serialized).toContain("BDAY:1988-04-12");
+    expect(serialized).toContain("ANNIVERSARY:2018-09-01");
+    expect(serialized).toContain("IMPP;TYPE=WORK,CHAT;PREF=1:sip:jane@example.com");
+    expect(serialized).toContain("UID:urn:uuid:12345678-1234-4234-9234-123456789abc");
+    expect(serialized).toContain("REV:2026-03-22T10:11:12Z");
   });
 });

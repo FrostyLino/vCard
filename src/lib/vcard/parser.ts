@@ -150,6 +150,30 @@ export function parseVcf(source: string): ParseResult {
         document.title = unescapeText(normalizedLine.value);
         break;
       }
+      case "ROLE": {
+        if (hasMeaningfulValue(document.role)) {
+          warnings.push("Multiple ROLE properties found. The last one was used.");
+        }
+
+        document.role = unescapeText(normalizedLine.value);
+        break;
+      }
+      case "BDAY": {
+        if (hasMeaningfulValue(document.birthday)) {
+          warnings.push("Multiple BDAY properties found. The last one was used.");
+        }
+
+        document.birthday = normalizedLine.value.trim();
+        break;
+      }
+      case "ANNIVERSARY": {
+        if (hasMeaningfulValue(document.anniversary)) {
+          warnings.push("Multiple ANNIVERSARY properties found. The last one was used.");
+        }
+
+        document.anniversary = normalizedLine.value.trim();
+        break;
+      }
       case "NOTE": {
         if (hasMeaningfulValue(document.note)) {
           warnings.push("Multiple NOTE properties found. The last one was used.");
@@ -170,8 +194,36 @@ export function parseVcf(source: string): ParseResult {
         document.urls.push(parseContactValue(normalizedLine));
         break;
       }
+      case "IMPP": {
+        document.impps.push(parseContactValue(normalizedLine));
+        break;
+      }
       case "ADR": {
         document.addresses.push(parseAddressValue(normalizedLine));
+        break;
+      }
+      case "UID": {
+        if (hasMeaningfulValue(document.uid)) {
+          warnings.push("Multiple UID properties found. The last one was used.");
+        }
+
+        document.uid = normalizedLine.value.trim();
+        break;
+      }
+      case "REV": {
+        if (hasMeaningfulValue(document.rev)) {
+          warnings.push("Multiple REV properties found. The last one was used.");
+        }
+
+        document.rev = normalizedLine.value.trim();
+        break;
+      }
+      case "PRODID": {
+        if (hasMeaningfulValue(document.prodId)) {
+          warnings.push("Multiple PRODID properties found. The last one was used.");
+        }
+
+        document.prodId = unescapeText(normalizedLine.value);
         break;
       }
       default: {
@@ -486,6 +538,7 @@ function applyGroupedAppleLabel(document: VCardDocument, group: string, label: s
   applyLabel(document.emails);
   applyLabel(document.phones);
   applyLabel(document.urls);
+  applyLabel(document.impps);
   applyLabel(document.addresses);
 
   return matchCount;
@@ -561,7 +614,16 @@ const PHOTO_TYPE_MAP: Record<string, string> = {
   heif: "image/heif",
 };
 
-const QUOTED_PRINTABLE_PROPERTIES = new Set(["FN", "N", "NICKNAME", "ORG", "TITLE", "NOTE"]);
+const QUOTED_PRINTABLE_PROPERTIES = new Set([
+  "FN",
+  "N",
+  "NICKNAME",
+  "ORG",
+  "TITLE",
+  "ROLE",
+  "NOTE",
+  "PRODID",
+]);
 const SUPPORTED_CHARSETS = new Set([
   "utf-8",
   "us-ascii",

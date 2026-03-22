@@ -5,11 +5,12 @@ A local macOS-first editor for single `.vcf` files built with `Tauri + React + T
 ## Current v1 scope
 
 - Open one `.vcf` file at a time
-- Edit core fields in a modern desktop UI
+- Edit core contact and business-card fields in a modern desktop UI
 - Show live raw vCard preview
 - Validate blocking issues before save
 - Preserve unknown properties during roundtrip serialization
 - Support vCard `3.0` and `4.0`
+- Support contact photos, dates, instant-messaging URIs and managed metadata
 
 ## Local development
 
@@ -38,4 +39,5 @@ cd src-tauri && cargo check
 
 - The app intentionally supports only one vCard entry per file in v1.
 - Unknown properties are preserved and written back after known fields.
+- New drafts generate managed `UID`, `REV` and `PRODID` values automatically.
 - Drag-and-drop support is wired through Tauri window events.

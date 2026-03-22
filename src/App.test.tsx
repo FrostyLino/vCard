@@ -65,6 +65,34 @@ describe("App", () => {
     expect(screen.getByText(/EMAIL:jane@example.com/i)).toBeInTheDocument();
   });
 
+  it("supports business-card fields, IM URIs and managed metadata in the editor", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /start blank/i }));
+    fireEvent.change(await screen.findByLabelText(/^formatted name \(fn\)$/i), {
+      target: { value: "Jane Doe" },
+    });
+    fireEvent.change(screen.getByLabelText(/^role$/i), {
+      target: { value: "Primary client contact" },
+    });
+    fireEvent.change(screen.getByLabelText(/^birthday$/i), {
+      target: { value: "1988-04-12" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /add im uri/i }));
+    const imppInputs = screen.getAllByLabelText(/^value$/i);
+    fireEvent.change(imppInputs[0], {
+      target: { value: "sip:jane@example.com" },
+    });
+
+    expect(screen.getByText(/ROLE:Primary client contact/i)).toBeInTheDocument();
+    expect(screen.getByText(/BDAY:1988-04-12/i)).toBeInTheDocument();
+    expect(screen.getByText(/IMPP:sip:jane@example.com/i)).toBeInTheDocument();
+    expect(screen.getByText(/^uid$/i)).toBeInTheDocument();
+    expect(screen.getByText(/^prodid$/i)).toBeInTheDocument();
+    expect(screen.getByText(/^rev$/i)).toBeInTheDocument();
+  });
+
   it("opens a selected vCard file and populates the editor", async () => {
     openVcfMock.mockResolvedValue("/tmp/jane.vcf");
     readVcfFileMock.mockResolvedValue(

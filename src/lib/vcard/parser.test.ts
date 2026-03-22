@@ -212,4 +212,35 @@ describe("parseVcf", () => {
     expect(result.warnings).toHaveLength(0);
     expect(result.document.formattedName).toBe("André Müller");
   });
+
+  it("parses business-card fields and managed metadata explicitly", () => {
+    const source = [
+      "BEGIN:VCARD",
+      "VERSION:4.0",
+      "PRODID:-//Example App//EN",
+      "FN:Jane Doe",
+      "ROLE:Primary client contact",
+      "BDAY:1988-04-12",
+      "ANNIVERSARY:2018-09-01",
+      "IMPP;TYPE=WORK;PREF=1:sip:jane@example.com",
+      "UID:urn:uuid:12345678-1234-4234-9234-123456789abc",
+      "REV:2026-03-22T10:11:12Z",
+      "END:VCARD",
+      "",
+    ].join("\r\n");
+
+    const result = parseVcf(source);
+
+    expect(result.document.role).toBe("Primary client contact");
+    expect(result.document.birthday).toBe("1988-04-12");
+    expect(result.document.anniversary).toBe("2018-09-01");
+    expect(result.document.impps[0]).toMatchObject({
+      value: "sip:jane@example.com",
+      types: ["work"],
+      pref: 1,
+    });
+    expect(result.document.uid).toBe("urn:uuid:12345678-1234-4234-9234-123456789abc");
+    expect(result.document.rev).toBe("2026-03-22T10:11:12Z");
+    expect(result.document.prodId).toBe("-//Example App//EN");
+  });
 });

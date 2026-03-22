@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_PRODID,
+  createRevisionValue,
   createEmptyAddressValue,
   createEmptyContactValue,
   createEmptyDocument,
   createEmptyStructuredName,
+  touchManagedMetadata,
 } from "./document";
 
 describe("document factories", () => {
@@ -42,10 +45,17 @@ describe("document factories", () => {
     expect(document.name).toEqual(createEmptyStructuredName());
     expect(document.nicknames).toEqual([]);
     expect(document.organizationUnits).toEqual([]);
+    expect(document.role).toBe("");
+    expect(document.birthday).toBe("");
+    expect(document.anniversary).toBe("");
     expect(document.emails).toEqual([]);
     expect(document.phones).toEqual([]);
     expect(document.urls).toEqual([]);
+    expect(document.impps).toEqual([]);
     expect(document.addresses).toEqual([]);
+    expect(document.uid).toBe("");
+    expect(document.rev).toBe("");
+    expect(document.prodId).toBe("");
     expect(document.unknownProperties).toEqual([]);
   });
 
@@ -64,5 +74,14 @@ describe("document factories", () => {
     expect(second.emails).toEqual([]);
     expect(second.addresses).toEqual([]);
     expect(second.name.given).toBe("");
+  });
+
+  it("adds managed metadata deterministically when requested", () => {
+    const document = createEmptyDocument("4.0");
+    const touched = touchManagedMetadata(document, new Date("2026-03-22T10:11:12Z"));
+
+    expect(touched.uid).toMatch(/^urn:uuid:/u);
+    expect(touched.rev).toBe(createRevisionValue(new Date("2026-03-22T10:11:12Z")));
+    expect(touched.prodId).toBe(DEFAULT_PRODID);
   });
 });

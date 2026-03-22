@@ -2,6 +2,8 @@ import type { AddressValue, ValidationIssue, VCardDocument } from "./types";
 import { hasMeaningfulValue } from "./utils";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/u;
+const URI_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:/iu;
 
 export function validateVCardDocument(document: VCardDocument): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
@@ -11,6 +13,22 @@ export function validateVCardDocument(document: VCardDocument): ValidationIssue[
       level: "error",
       field: "formattedName",
       message: "Formatted name (FN) is required.",
+    });
+  }
+
+  if (hasMeaningfulValue(document.birthday) && !isValidIsoDate(document.birthday)) {
+    issues.push({
+      level: "error",
+      field: "birthday",
+      message: "Birthday must use the YYYY-MM-DD format.",
+    });
+  }
+
+  if (hasMeaningfulValue(document.anniversary) && !isValidIsoDate(document.anniversary)) {
+    issues.push({
+      level: "error",
+      field: "anniversary",
+      message: "Anniversary must use the YYYY-MM-DD format.",
     });
   }
 
@@ -66,6 +84,25 @@ export function validateVCardDocument(document: VCardDocument): ValidationIssue[
     }
   });
 
+  document.impps.forEach((entry, index) => {
+    if (!hasMeaningfulValue(entry.value)) {
+      issues.push({
+        level: "warning",
+        field: `impps.${index}.value`,
+        message: `Instant messaging entry ${index + 1} is empty and will be skipped on save.`,
+      });
+      return;
+    }
+
+    if (!URI_SCHEME_PATTERN.test(entry.value)) {
+      issues.push({
+        level: "error",
+        field: `impps.${index}.value`,
+        message: `Instant messaging entry ${index + 1} must start with a URI scheme such as sip:, xmpp: or im:.`,
+      });
+    }
+  });
+
   document.addresses.forEach((entry, index) => {
     if (!hasAddressValue(entry)) {
       issues.push({
@@ -101,4 +138,13 @@ function hasAddressValue(address: AddressValue): boolean {
     address.postalCode,
     address.country,
   ].some(hasMeaningfulValue);
+}
+
+function isValidIsoDate(value: string): boolean {
+  if (!DATE_PATTERN.test(value)) {
+    return false;
+  }
+
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().startsWith(value);
 }

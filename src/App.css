@@ -488,6 +488,37 @@ textarea {
   margin-bottom: 1rem;
 }
 
+.metadata-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.metadata-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.9rem 1rem;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: var(--surface-strong);
+}
+
+.metadata-item__label {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.metadata-item__value {
+  overflow-wrap: anywhere;
+  color: var(--text-strong);
+  font-family: "SFMono-Regular", "JetBrains Mono", Consolas, monospace;
+  font-size: 0.82rem;
+}
+
 .summary-chip span {
   color: var(--text-muted);
   font-size: 0.82rem;

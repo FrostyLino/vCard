@@ -12,24 +12,30 @@ export function serializeVcf(document: VCardDocument): string {
   const lines: string[] = [
     "BEGIN:VCARD",
     `VERSION:${document.version}`,
-    serializeProperty("FN", escapeText(document.formattedName)),
   ];
 
-  if (hasStructuredName(document)) {
+  if (hasMeaningfulValue(document.prodId)) {
+    lines.push(serializeProperty("PRODID", escapeText(document.prodId)));
+  }
+
+  lines.push(serializeProperty("FN", escapeText(document.formattedName)));
+
+  const structuredNameValues = getStructuredNameValues(document);
+  if (structuredNameValues) {
     lines.push(
       serializeProperty(
         "N",
-        [
-          document.name.family,
-          document.name.given,
-          document.name.additional,
-          document.name.prefix,
-          document.name.suffix,
-        ]
-          .map(escapeText)
-          .join(";"),
+        structuredNameValues.map(escapeText).join(";"),
       ),
     );
+  }
+
+  if (hasMeaningfulValue(document.birthday)) {
+    lines.push(serializeProperty("BDAY", document.birthday.trim()));
+  }
+
+  if (hasMeaningfulValue(document.anniversary)) {
+    lines.push(serializeProperty("ANNIVERSARY", document.anniversary.trim()));
   }
 
   if (document.nicknames.length > 0) {
@@ -54,6 +60,10 @@ export function serializeVcf(document: VCardDocument): string {
     lines.push(serializeProperty("TITLE", escapeText(document.title)));
   }
 
+  if (hasMeaningfulValue(document.role)) {
+    lines.push(serializeProperty("ROLE", escapeText(document.role)));
+  }
+
   if (document.photo?.uri) {
     lines.push(serializePhotoProperty(document.photo, document.version));
   }
@@ -70,12 +80,24 @@ export function serializeVcf(document: VCardDocument): string {
     lines.push(...serializeContactProperties("URL", url, document.version));
   }
 
+  for (const impp of document.impps.filter((value) => hasMeaningfulValue(value.value))) {
+    lines.push(...serializeContactProperties("IMPP", impp, document.version));
+  }
+
   for (const address of document.addresses.filter(hasAddressValue)) {
     lines.push(...serializeAddressProperties(address, document.version));
   }
 
   if (hasMeaningfulValue(document.note)) {
     lines.push(serializeProperty("NOTE", escapeText(document.note)));
+  }
+
+  if (hasMeaningfulValue(document.uid)) {
+    lines.push(serializeProperty("UID", document.uid.trim()));
+  }
+
+  if (hasMeaningfulValue(document.rev)) {
+    lines.push(serializeProperty("REV", document.rev.trim()));
   }
 
   for (const property of document.unknownProperties) {
@@ -88,6 +110,24 @@ export function serializeVcf(document: VCardDocument): string {
 
 function hasStructuredName(document: VCardDocument): boolean {
   return Object.values(document.name).some(hasMeaningfulValue);
+}
+
+function getStructuredNameValues(document: VCardDocument): string[] | null {
+  if (hasStructuredName(document)) {
+    return [
+      document.name.family,
+      document.name.given,
+      document.name.additional,
+      document.name.prefix,
+      document.name.suffix,
+    ];
+  }
+
+  if (document.version === "3.0" && hasMeaningfulValue(document.formattedName)) {
+    return [document.formattedName.trim(), "", "", "", ""];
+  }
+
+  return null;
 }
 
 function hasAddressValue(address: AddressValue): boolean {

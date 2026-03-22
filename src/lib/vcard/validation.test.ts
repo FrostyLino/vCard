@@ -61,4 +61,37 @@ describe("validateVCardDocument", () => {
       }),
     );
   });
+
+  it("flags malformed business-card dates and invalid IMPP URIs", () => {
+    const document = createEmptyDocument("4.0");
+    document.formattedName = "Jane Doe";
+    document.birthday = "1988-13-40";
+    document.anniversary = "2018/09/01";
+    document.impps.push({
+      value: "jane on teams",
+      types: ["work"],
+      extraParams: [],
+    });
+
+    const issues = validateVCardDocument(document);
+
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        field: "birthday",
+      }),
+    );
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        field: "anniversary",
+      }),
+    );
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        field: "impps.0.value",
+      }),
+    );
+  });
 });
