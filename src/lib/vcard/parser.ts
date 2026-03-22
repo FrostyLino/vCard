@@ -13,7 +13,14 @@ import type {
   VCardParameter,
   VCardVersion,
 } from "./types";
-import { cleanList, hasMeaningfulValue, splitEscaped, unescapeText, unfoldVCardLines } from "./utils";
+import {
+  cleanList,
+  decodeQuotedPrintable,
+  hasMeaningfulValue,
+  splitEscaped,
+  unescapeText,
+  unfoldVCardLines,
+} from "./utils";
 
 interface ParsedLine {
   group?: string;
@@ -87,19 +94,21 @@ export function parseVcf(source: string): ParseResult {
       continue;
     }
 
-    if (hasUnsupportedEncoding(line)) {
+    const normalizedLine = normalizeKnownEncoding(line);
+
+    if (!normalizedLine || hasUnsupportedEncoding(normalizedLine)) {
       document.unknownProperties.push(toUnknownProperty(line));
       warnings.push(`${line.name} uses unsupported encoding parameters and was preserved as raw data.`);
       continue;
     }
 
-    switch (line.name) {
+    switch (normalizedLine.name) {
       case "FN": {
         if (hasMeaningfulValue(document.formattedName)) {
           warnings.push("Multiple FN properties found. The last one was used.");
         }
 
-        document.formattedName = unescapeText(line.value);
+        document.formattedName = unescapeText(normalizedLine.value);
         break;
       }
       case "N": {
@@ -107,13 +116,13 @@ export function parseVcf(source: string): ParseResult {
           warnings.push("Multiple N properties found. The last one was used.");
         }
 
-        document.name = parseStructuredName(line.value);
+        document.name = parseStructuredName(normalizedLine.value);
         break;
       }
       case "NICKNAME": {
         document.nicknames = [
           ...document.nicknames,
-          ...splitEscaped(line.value, ",").map(unescapeText).filter(hasMeaningfulValue),
+          ...splitEscaped(normalizedLine.value, ",").map(unescapeText).filter(hasMeaningfulValue),
         ];
         break;
       }
@@ -122,7 +131,7 @@ export function parseVcf(source: string): ParseResult {
           warnings.push("Multiple ORG properties found. The last one was used.");
         }
 
-        document.organizationUnits = splitEscaped(line.value, ";")
+        document.organizationUnits = splitEscaped(normalizedLine.value, ";")
           .map(unescapeText)
           .filter(hasMeaningfulValue);
         break;
@@ -132,7 +141,7 @@ export function parseVcf(source: string): ParseResult {
           warnings.push("Multiple TITLE properties found. The last one was used.");
         }
 
-        document.title = unescapeText(line.value);
+        document.title = unescapeText(normalizedLine.value);
         break;
       }
       case "NOTE": {
@@ -140,27 +149,27 @@ export function parseVcf(source: string): ParseResult {
           warnings.push("Multiple NOTE properties found. The last one was used.");
         }
 
-        document.note = unescapeText(line.value);
+        document.note = unescapeText(normalizedLine.value);
         break;
       }
       case "EMAIL": {
-        document.emails.push(parseContactValue(line));
+        document.emails.push(parseContactValue(normalizedLine));
         break;
       }
       case "TEL": {
-        document.phones.push(parseContactValue(line));
+        document.phones.push(parseContactValue(normalizedLine));
         break;
       }
       case "URL": {
-        document.urls.push(parseContactValue(line));
+        document.urls.push(parseContactValue(normalizedLine));
         break;
       }
       case "ADR": {
-        document.addresses.push(parseAddressValue(line));
+        document.addresses.push(parseAddressValue(normalizedLine));
         break;
       }
       default: {
-        document.unknownProperties.push(toUnknownProperty(line));
+        document.unknownProperties.push(toUnknownProperty(normalizedLine));
       }
     }
   }
@@ -435,6 +444,31 @@ function findParameterValues(params: VCardParameter[], key: string): string[] {
     .flatMap((param) => param.values.map((value) => value.trim()));
 }
 
+function normalizeKnownEncoding(line: ParsedLine): ParsedLine | null {
+  const encodingValues = findParameterValues(line.params, "ENCODING").map((value) =>
+    value.toLowerCase(),
+  );
+
+  if (encodingValues.length === 0) {
+    return line;
+  }
+
+  if (
+    encodingValues.every((value) => value === "quoted-printable" || value === "q") &&
+    QUOTED_PRINTABLE_PROPERTIES.has(line.name)
+  ) {
+    const charset = findParameterValues(line.params, "CHARSET")[0] ?? "utf-8";
+
+    return {
+      ...line,
+      params: line.params.filter((param) => param.key?.toUpperCase() !== "ENCODING"),
+      value: decodeQuotedPrintable(line.value, charset),
+    };
+  }
+
+  return null;
+}
+
 function hasUnsupportedEncoding(line: ParsedLine): boolean {
   return line.params.some((param) => {
     const key = param.key?.toUpperCase();
@@ -479,3 +513,5 @@ const PHOTO_TYPE_MAP: Record<string, string> = {
   heic: "image/heic",
   heif: "image/heif",
 };
+
+const QUOTED_PRINTABLE_PROPERTIES = new Set(["FN", "N", "NICKNAME", "ORG", "TITLE", "NOTE"]);

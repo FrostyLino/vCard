@@ -98,6 +98,27 @@ export function foldLine(line: string): string {
   return segments.join("\r\n");
 }
 
+export function decodeQuotedPrintable(value: string, charset = "utf-8"): string {
+  const normalized = normalizeLineEndings(value).replace(/=\n/g, "");
+  const bytes: number[] = [];
+
+  for (let index = 0; index < normalized.length; index += 1) {
+    const char = normalized[index];
+    const hexPair = normalized.slice(index + 1, index + 3);
+
+    if (char === "=" && /^[0-9A-Fa-f]{2}$/u.test(hexPair)) {
+      bytes.push(Number.parseInt(hexPair, 16));
+      index += 2;
+      continue;
+    }
+
+    bytes.push(char.charCodeAt(0));
+  }
+
+  const decoderEncoding = charset.trim().toLowerCase() === "us-ascii" ? "utf-8" : charset;
+  return new TextDecoder(decoderEncoding).decode(new Uint8Array(bytes));
+}
+
 export function hasMeaningfulValue(value: string): boolean {
   return value.trim().length > 0;
 }

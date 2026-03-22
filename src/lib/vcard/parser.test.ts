@@ -155,4 +155,21 @@ describe("parseVcf", () => {
     expect(result.document.name.given).toBe("Jöhn");
     expect(result.document.note).toBe("Grüße aus München");
   });
+
+  it("decodes quoted-printable text fields with UTF-8 payloads", () => {
+    const source = [
+      "BEGIN:VCARD",
+      "VERSION:3.0",
+      "FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:J=C3=B6rg M=C3=BCller",
+      "NOTE;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:Gr=C3=BC=C3=9Fe aus K=C3=B6ln",
+      "END:VCARD",
+      "",
+    ].join("\r\n");
+
+    const result = parseVcf(source);
+
+    expect(result.warnings).toHaveLength(0);
+    expect(result.document.formattedName).toBe("Jörg Müller");
+    expect(result.document.note).toBe("Grüße aus Köln");
+  });
 });
