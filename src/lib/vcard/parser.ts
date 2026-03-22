@@ -246,7 +246,13 @@ function parseParameter(source: string): VCardParameter | null {
 }
 
 function normalizeParameterValue(value: string): string {
-  return value.trim().replace(/^"(.*)"$/u, "$1");
+  const trimmed = value.trim();
+
+  if (!trimmed.startsWith('"') || !trimmed.endsWith('"')) {
+    return trimmed;
+  }
+
+  return trimmed.slice(1, -1).replace(/\\"/g, '"');
 }
 
 function normalizeVersion(value: string): VCardVersion {

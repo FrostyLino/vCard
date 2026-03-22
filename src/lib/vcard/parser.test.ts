@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createEmptyDocument } from "./document";
 import { parseVcf } from "./parser";
 import { serializeVcf } from "./serializer";
 
@@ -118,5 +119,20 @@ describe("parseVcf", () => {
 
     expect(result.document.photo?.mediaType).toBe("image/png");
     expect(result.document.photo?.uri).toContain("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA");
+  });
+
+  it("roundtrips quoted label parameters without keeping escape slashes", () => {
+    const document = createEmptyDocument("4.0");
+    document.formattedName = "Jane Doe";
+    document.emails.push({
+      value: "jane@example.com",
+      types: ["work"],
+      label: 'Main "VIP" line',
+      extraParams: [],
+    });
+
+    const parsed = parseVcf(serializeVcf(document));
+
+    expect(parsed.document.emails[0].label).toBe('Main "VIP" line');
   });
 });
