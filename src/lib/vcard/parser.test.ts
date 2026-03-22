@@ -103,4 +103,20 @@ describe("parseVcf", () => {
     expect(result.document.photo?.uri).toContain("data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD");
     expect(serialized).toContain("PHOTO;VALUE=uri:data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD");
   });
+
+  it("detects the photo media type even when TYPE contains multiple values", () => {
+    const source = [
+      "BEGIN:VCARD",
+      "VERSION:3.0",
+      "FN:PNG Photo",
+      "PHOTO;ENCODING=b;TYPE=BASE64,PNG:iVBORw0KGgoAAAANSUhEUgAAAAUA",
+      "END:VCARD",
+      "",
+    ].join("\r\n");
+
+    const result = parseVcf(source);
+
+    expect(result.document.photo?.mediaType).toBe("image/png");
+    expect(result.document.photo?.uri).toContain("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAUA");
+  });
 });

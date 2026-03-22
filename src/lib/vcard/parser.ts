@@ -403,18 +403,19 @@ function extractPhotoMediaType(params: VCardParameter[]): string | undefined {
     return mediaType.toLowerCase();
   }
 
-  const rawType = findParameterValues(params, "TYPE")[0];
-  if (!rawType) {
-    return undefined;
+  for (const rawType of findParameterValues(params, "TYPE")) {
+    const normalized = rawType.toLowerCase();
+    const mapped = PHOTO_TYPE_MAP[normalized];
+    if (mapped) {
+      return mapped;
+    }
+
+    if (normalized.startsWith("image/")) {
+      return normalized;
+    }
   }
 
-  const normalized = rawType.toLowerCase();
-  const mapped = PHOTO_TYPE_MAP[normalized];
-  if (mapped) {
-    return mapped;
-  }
-
-  return normalized.startsWith("image/") ? normalized : undefined;
+  return undefined;
 }
 
 function extractMediaTypeFromDataUri(value: string): string | undefined {
