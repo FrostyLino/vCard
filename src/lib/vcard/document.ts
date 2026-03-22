@@ -65,12 +65,22 @@ export function createEmptyDocument(version: VCardVersion = "4.0"): VCardDocumen
   };
 }
 
-export function touchManagedMetadata(document: VCardDocument, now = new Date()): VCardDocument {
+export function ensureManagedMetadata(document: VCardDocument): VCardDocument {
   return {
     ...document,
     uid: document.uid || createUidValue(),
-    rev: createRevisionValue(now),
     prodId: document.prodId || DEFAULT_PRODID,
+  };
+}
+
+export function touchManagedMetadata(document: VCardDocument, now = new Date()): VCardDocument {
+  const ensured = ensureManagedMetadata(document);
+
+  return {
+    ...ensured,
+    uid: ensured.uid,
+    rev: createRevisionValue(now),
+    prodId: ensured.prodId,
   };
 }
 

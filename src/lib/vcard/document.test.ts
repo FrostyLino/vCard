@@ -6,6 +6,7 @@ import {
   createEmptyContactValue,
   createEmptyDocument,
   createEmptyStructuredName,
+  ensureManagedMetadata,
   touchManagedMetadata,
 } from "./document";
 
@@ -83,5 +84,16 @@ describe("document factories", () => {
     expect(touched.uid).toMatch(/^urn:uuid:/u);
     expect(touched.rev).toBe(createRevisionValue(new Date("2026-03-22T10:11:12Z")));
     expect(touched.prodId).toBe(DEFAULT_PRODID);
+  });
+
+  it("can ensure stable UID and PRODID without changing the revision", () => {
+    const document = createEmptyDocument("4.0");
+    document.rev = "2026-03-20T08:00:00Z";
+
+    const ensured = ensureManagedMetadata(document);
+
+    expect(ensured.uid).toMatch(/^urn:uuid:/u);
+    expect(ensured.prodId).toBe(DEFAULT_PRODID);
+    expect(ensured.rev).toBe("2026-03-20T08:00:00Z");
   });
 });

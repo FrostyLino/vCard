@@ -14,6 +14,7 @@ import {
   createEmptyAddressValue,
   createEmptyContactValue,
   createEmptyDocument,
+  ensureManagedMetadata,
   parseVcf,
   serializeVcf,
   touchManagedMetadata,
@@ -217,6 +218,8 @@ function App() {
     }
 
     try {
+      const documentToSave = touchManagedMetadata(session.document);
+      const content = serializeVcf(documentToSave);
       const targetPath =
         session.sourcePath ??
         (await saveVcfAs(buildSuggestedPath(session.sourcePath, session.document)));
@@ -225,7 +228,7 @@ function App() {
         return;
       }
 
-      await persistDocument(targetPath, serializedDocument);
+      await persistDocument(targetPath, documentToSave, content);
     } catch (error) {
       await showError("Could not save the file", error);
     }
@@ -245,18 +248,24 @@ function App() {
     }
 
     try {
+      const documentToSave = touchManagedMetadata(session.document);
+      const content = serializeVcf(documentToSave);
       const targetPath = await saveVcfAs(buildSuggestedPath(session.sourcePath, session.document));
       if (!targetPath) {
         return;
       }
 
-      await persistDocument(targetPath, serializedDocument);
+      await persistDocument(targetPath, documentToSave, content);
     } catch (error) {
       await showError("Could not save the file", error);
     }
   }
 
-  async function persistDocument(targetPath: string, content: string) {
+  async function persistDocument(
+    targetPath: string,
+    document: VCardDocument,
+    content: string,
+  ) {
     try {
       setBusyLabel("Saving");
       await writeVcfFile(targetPath, content);
@@ -265,6 +274,7 @@ function App() {
         current
           ? {
               ...current,
+              document,
               sourcePath: targetPath,
               savedSnapshot: content,
             }
@@ -348,7 +358,7 @@ function App() {
       current
         ? {
             ...current,
-            document: touchManagedMetadata(update(current.document)),
+            document: ensureManagedMetadata(update(current.document)),
           }
         : current,
     );
@@ -878,7 +888,7 @@ function App() {
 
             <SectionCard
               title="Managed metadata"
-              description="Generated identifiers and revision data that stay inside the vCard."
+              description="UID and PRODID stay ready while REV is refreshed on save."
             >
               <div className="metadata-list">
                 <MetadataItem label="UID" value={session.document.uid || "Not set yet"} />
@@ -889,7 +899,7 @@ function App() {
 
             <SectionCard
               title="Raw Preview"
-              description="This is the exact text written on save."
+              description="Current serialized vCard preview. Managed REV updates on save."
             >
               <pre className="preview-panel">{serializedDocument}</pre>
             </SectionCard>

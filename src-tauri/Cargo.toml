@@ -1,8 +1,10 @@
 [package]
 name = "vcard-editor"
-version = "0.1.0"
-description = "A focused editor for single vCard files"
-authors = ["Lino"]
+version = "1.0.0"
+description = "A focused macOS-first editor for single vCard files"
+authors = ["Lino Seydel <lino.seydel@hm.edu>"]
+license = "MIT"
+repository = "https://github.com/FrostyLino/vCard"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

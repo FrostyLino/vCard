@@ -1,7 +1,14 @@
 {
   "name": "vcard-editor",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "description": "A focused macOS-first editor for single .vcf contact files",
+  "license": "MIT",
+  "author": "Lino Seydel <lino.seydel@hm.edu>",
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:FrostyLino/vCard.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,6 +16,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "preview": "vite preview",
+    "verify": "npm test && npm run build && (cd src-tauri && cargo check)",
     "tauri": "tauri"
   },
   "dependencies": {

@@ -169,6 +169,35 @@ describe("App", () => {
     expect(screen.getAllByText("jane-doe.vcf").length).toBeGreaterThan(0);
   });
 
+  it("injects managed metadata when saving an imported contact", async () => {
+    openVcfMock.mockResolvedValue("/tmp/imported.vcf");
+    readVcfFileMock.mockResolvedValue(
+      [
+        "BEGIN:VCARD",
+        "VERSION:4.0",
+        "FN:Jane Doe",
+        "END:VCARD",
+        "",
+      ].join("\r\n"),
+    );
+    writeVcfFileMock.mockResolvedValue(undefined);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /open a vcard file/i }));
+    expect(await screen.findByDisplayValue("Jane Doe")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() =>
+      expect(writeVcfFileMock).toHaveBeenCalledWith(
+        "/tmp/imported.vcf",
+        expect.stringMatching(/UID:urn:uuid:/i),
+      ),
+    );
+    expect(writeVcfFileMock.mock.calls[0]?.[1]).toMatch(/PRODID:-\/\/vCard Editor\/\/EN/i);
+    expect(writeVcfFileMock.mock.calls[0]?.[1]).toMatch(/REV:\d{4}-\d{2}-\d{2}T/i);
+  });
+
   it("shows a visible error when the save dialog fails for a new draft", async () => {
     saveVcfAsMock.mockRejectedValue(new Error("Dialog failed"));
 
