@@ -135,4 +135,24 @@ describe("parseVcf", () => {
 
     expect(parsed.document.emails[0].label).toBe('Main "VIP" line');
   });
+
+  it("accepts UTF-8 charset parameters on known text fields", () => {
+    const source = [
+      "BEGIN:VCARD",
+      "VERSION:3.0",
+      "FN;CHARSET=UTF-8:Jöhn Döe",
+      "N;CHARSET=UTF-8:Döe;Jöhn;;;",
+      "NOTE;CHARSET=UTF-8:Grüße aus München",
+      "END:VCARD",
+      "",
+    ].join("\r\n");
+
+    const result = parseVcf(source);
+
+    expect(result.warnings).toHaveLength(0);
+    expect(result.document.formattedName).toBe("Jöhn Döe");
+    expect(result.document.name.family).toBe("Döe");
+    expect(result.document.name.given).toBe("Jöhn");
+    expect(result.document.note).toBe("Grüße aus München");
+  });
 });

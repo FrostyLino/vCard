@@ -438,7 +438,18 @@ function findParameterValues(params: VCardParameter[], key: string): string[] {
 function hasUnsupportedEncoding(line: ParsedLine): boolean {
   return line.params.some((param) => {
     const key = param.key?.toUpperCase();
-    return key === "ENCODING" || key === "CHARSET";
+    if (key === "ENCODING") {
+      return true;
+    }
+
+    if (key === "CHARSET") {
+      return param.values.some((value) => {
+        const normalized = value.trim().toLowerCase();
+        return normalized !== "utf-8" && normalized !== "us-ascii";
+      });
+    }
+
+    return false;
   });
 }
 
