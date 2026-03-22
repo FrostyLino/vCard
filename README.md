@@ -1,6 +1,6 @@
 # vCard Editor
 
-`vCard Editor` is a macOS-first desktop app for opening, editing, validating and safely saving a single `.vcf` file at a time. It is built with `Tauri + React + TypeScript` and focuses on a clean UI, conservative roundtrips and practical day-to-day contact editing.
+`vCard Editor` is a macOS-first desktop app for opening, editing, validating and safely saving `.vcf` files. It is built with `Tauri + React + TypeScript` and focuses on a clean UI, conservative roundtrips and practical day-to-day contact editing in both single-contact and batch workflows.
 
 ## Release status
 
@@ -14,6 +14,9 @@ Current release builds are functional but unsigned and not notarized. For public
 
 ## What it supports
 
+- Two editing modes:
+  - `Single`: open and edit one vCard file with a structured inspector and live raw preview
+  - `Batch`: import many vCards, inspect one item in full or apply a structured patch to many selected files
 - Open and save exactly one vCard per file
 - Read and write `vCard 3.0` and `4.0`
 - Modern structured editing UI with live raw preview
@@ -31,6 +34,19 @@ Current release builds are functional but unsigned and not notarized. For public
 - Apple grouped labels via `itemX.X-ABLabel`
 - Conservative preservation of unknown properties during roundtrip editing
 
+## Batch workflow
+
+- Import multiple `.vcf` files directly or load all `.vcf` files from one folder
+- Search, sort and select files from the batch table
+- Edit one selected item with the same full inspector used in single mode
+- Select multiple valid items to open the batch patch panel
+- Preview is required before apply, so the write plan stays explicit
+- Two write strategies are supported:
+  - `In-place with backups`
+  - `Output directory`
+- In-place batch writes create timestamped sibling backup files before the target file is overwritten
+- Files that cannot be parsed or still contain blocking validation errors are skipped instead of being silently rewritten
+
 ## Validation and safety
 
 - `FN` is required before save
@@ -39,6 +55,8 @@ Current release builds are functional but unsigned and not notarized. For public
 - Empty optional rows are warned about before save
 - Unknown or unsupported fields are preserved instead of dropped
 - Import warnings remain visible during editing
+- Batch apply never bypasses preview
+- Unreadable batch items are tracked explicitly and excluded from writes
 
 ## Local development
 
@@ -90,5 +108,6 @@ That tag triggers the release workflow, which builds macOS bundles and creates t
 ## Scope limits
 
 - The app intentionally supports only one `BEGIN:VCARD ... END:VCARD` block per file.
+- Batch folder import is intentionally non-recursive in the current implementation.
 - The editor is macOS-first; Linux and Windows are not part of the supported release target right now.
 - Rare standard fields without dedicated UI are preserved as raw properties instead of being edited directly.
