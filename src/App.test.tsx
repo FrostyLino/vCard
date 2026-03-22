@@ -87,6 +87,38 @@ describe("App", () => {
     expect(readVcfFileMock).toHaveBeenCalledWith("/tmp/jane.vcf");
   });
 
+  it("keeps the empty state when the open dialog is cancelled", async () => {
+    openVcfMock.mockResolvedValue(null);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /open a vcard file/i }));
+
+    await waitFor(() => {
+      expect(openVcfMock).toHaveBeenCalled();
+    });
+    expect(readVcfFileMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId("empty-state")).toBeInTheDocument();
+  });
+
+  it("shows a visible error when opening a file fails to parse", async () => {
+    openVcfMock.mockResolvedValue("/tmp/broken.vcf");
+    readVcfFileMock.mockResolvedValue(
+      [
+        "BEGIN:VCARD",
+        "VERSION:5.0",
+        "FN:Broken Contact",
+        "END:VCARD",
+        "",
+      ].join("\r\n"),
+    );
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /open a vcard file/i }));
+
+    expect(await screen.findByText(/unsupported vcard version: 5\.0/i)).toBeInTheDocument();
+    expect(screen.getByTestId("empty-state")).toBeInTheDocument();
+  });
+
   it("saves a valid draft through save as and updates the visible file state", async () => {
     saveVcfAsMock.mockResolvedValue("/tmp/jane-doe.vcf");
     writeVcfFileMock.mockResolvedValue(undefined);
@@ -107,6 +139,37 @@ describe("App", () => {
     );
     expect(screen.getByText(/saved jane-doe\.vcf\./i)).toBeInTheDocument();
     expect(screen.getAllByText("jane-doe.vcf").length).toBeGreaterThan(0);
+  });
+
+  it("shows a visible error when the save dialog fails for a new draft", async () => {
+    saveVcfAsMock.mockRejectedValue(new Error("Dialog failed"));
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /start blank/i }));
+    fireEvent.change(await screen.findByLabelText(/^formatted name \(fn\)$/i), {
+      target: { value: "Jane Doe" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(await screen.findByText(/dialog failed/i)).toBeInTheDocument();
+    expect(writeVcfFileMock).not.toHaveBeenCalled();
+  });
+
+  it("shows a visible error when writing the file fails during save", async () => {
+    saveVcfAsMock.mockResolvedValue("/tmp/jane-doe.vcf");
+    writeVcfFileMock.mockRejectedValue(new Error("Disk full"));
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /start blank/i }));
+    fireEvent.change(await screen.findByLabelText(/^formatted name \(fn\)$/i), {
+      target: { value: "Jane Doe" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    expect(await screen.findByText(/disk full/i)).toBeInTheDocument();
+    expect(screen.getAllByText("Unsaved draft").length).toBeGreaterThan(0);
   });
 
   it("blocks save when blocking validation issues remain", async () => {

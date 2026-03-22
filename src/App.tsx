@@ -215,14 +215,19 @@ function App() {
       return;
     }
 
-    const targetPath =
-      session.sourcePath ?? (await saveVcfAs(buildSuggestedPath(session.sourcePath, session.document)));
+    try {
+      const targetPath =
+        session.sourcePath ??
+        (await saveVcfAs(buildSuggestedPath(session.sourcePath, session.document)));
 
-    if (!targetPath) {
-      return;
+      if (!targetPath) {
+        return;
+      }
+
+      await persistDocument(targetPath, serializedDocument);
+    } catch (error) {
+      await showError("Could not save the file", error);
     }
-
-    await persistDocument(targetPath, serializedDocument);
   }
 
   async function handleSaveAs() {
