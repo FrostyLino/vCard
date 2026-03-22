@@ -16,6 +16,11 @@ export function validateVCardDocument(document: VCardDocument): ValidationIssue[
 
   document.emails.forEach((entry, index) => {
     if (!hasMeaningfulValue(entry.value)) {
+      issues.push({
+        level: "warning",
+        field: `emails.${index}.value`,
+        message: `Email ${index + 1} is empty and will be skipped on save.`,
+      });
       return;
     }
 
@@ -40,6 +45,11 @@ export function validateVCardDocument(document: VCardDocument): ValidationIssue[
 
   document.urls.forEach((entry, index) => {
     if (!hasMeaningfulValue(entry.value)) {
+      issues.push({
+        level: "warning",
+        field: `urls.${index}.value`,
+        message: `URL ${index + 1} is empty and will be skipped on save.`,
+      });
       return;
     }
 
