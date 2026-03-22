@@ -479,7 +479,7 @@ function hasUnsupportedEncoding(line: ParsedLine): boolean {
     if (key === "CHARSET") {
       return param.values.some((value) => {
         const normalized = value.trim().toLowerCase();
-        return normalized !== "utf-8" && normalized !== "us-ascii";
+        return !SUPPORTED_CHARSETS.has(normalized);
       });
     }
 
@@ -515,3 +515,10 @@ const PHOTO_TYPE_MAP: Record<string, string> = {
 };
 
 const QUOTED_PRINTABLE_PROPERTIES = new Set(["FN", "N", "NICKNAME", "ORG", "TITLE", "NOTE"]);
+const SUPPORTED_CHARSETS = new Set([
+  "utf-8",
+  "us-ascii",
+  "iso-8859-1",
+  "latin1",
+  "windows-1252",
+]);

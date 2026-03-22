@@ -188,4 +188,19 @@ describe("parseVcf", () => {
     expect(result.warnings).toHaveLength(0);
     expect(result.document.formattedName).toBe("Jörg Müller");
   });
+
+  it("decodes quoted-printable text fields with ISO-8859-1 payloads", () => {
+    const source = [
+      "BEGIN:VCARD",
+      "VERSION:3.0",
+      "FN;CHARSET=ISO-8859-1;ENCODING=QUOTED-PRINTABLE:Andr=E9 M=FCller",
+      "END:VCARD",
+      "",
+    ].join("\r\n");
+
+    const result = parseVcf(source);
+
+    expect(result.warnings).toHaveLength(0);
+    expect(result.document.formattedName).toBe("André Müller");
+  });
 });

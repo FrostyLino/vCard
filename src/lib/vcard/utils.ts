@@ -120,7 +120,13 @@ export function decodeQuotedPrintable(value: string, charset = "utf-8"): string 
     bytes.push(char.charCodeAt(0));
   }
 
-  const decoderEncoding = charset.trim().toLowerCase() === "us-ascii" ? "utf-8" : charset;
+  const normalizedCharset = charset.trim().toLowerCase();
+  const decoderEncoding =
+    normalizedCharset === "us-ascii"
+      ? "utf-8"
+      : normalizedCharset === "latin1"
+        ? "iso-8859-1"
+        : normalizedCharset;
   return new TextDecoder(decoderEncoding).decode(new Uint8Array(bytes));
 }
 
