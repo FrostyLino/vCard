@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  cloneElement,
+  isValidElement,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
 import "./App.css";
@@ -23,6 +31,8 @@ interface EditorSession {
   savedSnapshot: string;
   parseWarnings: string[];
 }
+
+type ContactKind = "email" | "phone" | "url";
 
 function App() {
   const [session, setSession] = useState<EditorSession | null>(null);
@@ -584,7 +594,7 @@ function App() {
                       ? session.document.photo.isEmbedded
                         ? "This image is embedded into the .vcf file."
                         : "This photo is linked by URI and will be preserved."
-                      : "Choose an image to store it as the contact photo."}
+                      : "Choose an image to store it as the contact photo. JPEG and PNG are the safest formats for iOS and other contacts apps."}
                   </p>
                   {session.document.photo?.mediaType ? (
                     <span className="status-pill">{session.document.photo.mediaType}</span>
@@ -614,65 +624,85 @@ function App() {
               title="Identity"
               description="Core name fields shown by contact apps first."
             >
-              <FieldGroup label="Formatted name (FN)" hint="Required for saving">
+              <FieldGroup
+                label="Formatted name (FN)"
+                hint="Required. This is the visible display name in contact apps."
+                required
+              >
                 <input
                   value={session.document.formattedName}
                   onChange={(event) => updateTextField("formattedName", event.currentTarget.value)}
                   placeholder="Jane Doe"
+                  autoComplete="name"
+                  autoCapitalize="words"
                 />
               </FieldGroup>
 
               <div className="grid grid--two">
-                <FieldGroup label="Given name">
+                <FieldGroup label="Given name" hint="First name only.">
                   <input
                     value={session.document.name.given}
                     onChange={(event) =>
                       updateStructuredNameField("given", event.currentTarget.value)
                     }
                     placeholder="Jane"
+                    autoComplete="given-name"
+                    autoCapitalize="words"
                   />
                 </FieldGroup>
-                <FieldGroup label="Family name">
+                <FieldGroup label="Family name" hint="Surname or last name.">
                   <input
                     value={session.document.name.family}
                     onChange={(event) =>
                       updateStructuredNameField("family", event.currentTarget.value)
                     }
                     placeholder="Doe"
+                    autoComplete="family-name"
+                    autoCapitalize="words"
                   />
                 </FieldGroup>
-                <FieldGroup label="Additional names">
+                <FieldGroup label="Additional names" hint="Middle names, if any.">
                   <input
                     value={session.document.name.additional}
                     onChange={(event) =>
                       updateStructuredNameField("additional", event.currentTarget.value)
                     }
                     placeholder="Middle names"
+                    autoComplete="additional-name"
+                    autoCapitalize="words"
                   />
                 </FieldGroup>
-                <FieldGroup label="Prefix">
+                <FieldGroup label="Prefix" hint="Honorific, for example Dr.">
                   <input
                     value={session.document.name.prefix}
                     onChange={(event) =>
                       updateStructuredNameField("prefix", event.currentTarget.value)
                     }
                     placeholder="Dr."
+                    autoComplete="honorific-prefix"
+                    autoCapitalize="words"
                   />
                 </FieldGroup>
-                <FieldGroup label="Suffix">
+                <FieldGroup label="Suffix" hint="Suffix, for example Jr.">
                   <input
                     value={session.document.name.suffix}
                     onChange={(event) =>
                       updateStructuredNameField("suffix", event.currentTarget.value)
                     }
                     placeholder="Jr."
+                    autoComplete="honorific-suffix"
+                    autoCapitalize="words"
                   />
                 </FieldGroup>
-                <FieldGroup label="Nicknames" hint="Comma separated">
+                <FieldGroup
+                  label="Nicknames"
+                  hint="Comma separated. Capitalization is preserved."
+                >
                   <input
                     value={session.document.nicknames.join(", ")}
                     onChange={(event) => updateNicknames(event.currentTarget.value)}
                     placeholder="JJ, J"
+                    autoComplete="nickname"
                   />
                 </FieldGroup>
               </div>
@@ -688,13 +718,17 @@ function App() {
                     value={session.document.organizationUnits.join("; ")}
                     onChange={(event) => updateOrganization(event.currentTarget.value)}
                     placeholder="Acme GmbH; Product"
+                    autoComplete="organization"
+                    autoCapitalize="words"
                   />
                 </FieldGroup>
-                <FieldGroup label="Title">
+                <FieldGroup label="Title" hint="Role or job title.">
                   <input
                     value={session.document.title}
                     onChange={(event) => updateTextField("title", event.currentTarget.value)}
                     placeholder="Design Lead"
+                    autoComplete="organization-title"
+                    autoCapitalize="words"
                   />
                 </FieldGroup>
               </div>
@@ -702,7 +736,8 @@ function App() {
 
             <ContactSection
               title="Email addresses"
-              description="Multiple entries are supported and keep group metadata."
+              description="Use complete email addresses. Multiple entries are supported."
+              kind="email"
               addLabel="Add email"
               entries={session.document.emails}
               placeholder="jane@company.com"
@@ -714,7 +749,8 @@ function App() {
 
             <ContactSection
               title="Phone numbers"
-              description="Great for mobile, work and direct lines."
+              description="International formatting is recommended for best sync behavior."
+              kind="phone"
               addLabel="Add phone"
               entries={session.document.phones}
               placeholder="+49 151 23456789"
@@ -726,7 +762,8 @@ function App() {
 
             <ContactSection
               title="URLs"
-              description="Websites, profiles and booking links."
+              description="Use complete URLs including the scheme, for example https://."
+              kind="url"
               addLabel="Add URL"
               entries={session.document.urls}
               placeholder="https://example.com"
@@ -748,12 +785,13 @@ function App() {
               title="Notes"
               description="Stored as NOTE in the final vCard."
             >
-              <FieldGroup label="Note">
+              <FieldGroup label="Note" hint="Freeform text. Line breaks are preserved.">
                 <textarea
                   value={session.document.note}
                   onChange={(event) => updateTextField("note", event.currentTarget.value)}
                   placeholder="Context, reminders or freeform metadata"
                   rows={6}
+                  spellCheck
                 />
               </FieldGroup>
             </SectionCard>
@@ -807,22 +845,61 @@ function SectionCard({ title, description, children }: SectionCardProps) {
 interface FieldGroupProps {
   label: string;
   hint?: string;
+  required?: boolean;
   children: ReactNode;
 }
 
-function FieldGroup({ label, hint, children }: FieldGroupProps) {
+interface FieldControlProps {
+  id?: string;
+  required?: boolean;
+  "aria-describedby"?: string;
+}
+
+function FieldGroup({ label, hint, required = false, children }: FieldGroupProps) {
+  const reactId = useId();
+  const controlId = `field-${reactId.replace(/:/gu, "")}`;
+  const hintId = hint ? `${controlId}-hint` : undefined;
+
+  if (!isValidElement<FieldControlProps>(children)) {
+    return (
+      <div className="field-group">
+        <span className="field-group__label">{label}</span>
+        {children}
+        {hint ? <span className="field-group__hint">{hint}</span> : null}
+      </div>
+    );
+  }
+
+  const describedBy = [children.props["aria-describedby"], hintId].filter(Boolean).join(" ") || undefined;
+  const resolvedControlId = children.props.id ?? controlId;
+  const control = cloneElement(children, {
+    id: resolvedControlId,
+    required: children.props.required ?? required,
+    "aria-describedby": describedBy,
+  });
+
   return (
-    <label className="field-group">
-      <span className="field-group__label">{label}</span>
-      {children}
-      {hint ? <span className="field-group__hint">{hint}</span> : null}
-    </label>
+    <div className="field-group">
+      <div className="field-group__header">
+        <label className="field-group__label" htmlFor={resolvedControlId}>
+          {label}
+        </label>
+        {required ? <span className="field-group__required">Required</span> : null}
+      </div>
+      {control}
+      {hint ? (
+        <span className="field-group__hint" id={hintId}>
+          {hint}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
 interface ContactSectionProps {
   title: string;
   description: string;
+  kind: ContactKind;
   addLabel: string;
   placeholder: string;
   entries: ContactValue[];
@@ -835,6 +912,7 @@ interface ContactSectionProps {
 function ContactSection({
   title,
   description,
+  kind,
   addLabel,
   placeholder,
   entries,
@@ -887,8 +965,9 @@ function ContactSection({
               </div>
 
               <div className="grid grid--two">
-                <FieldGroup label="Value">
+                <FieldGroup label="Value" hint={getContactValueHint(kind)}>
                   <input
+                    {...getContactValueInputProps(kind)}
                     value={entry.value}
                     onChange={(event) => {
                       const value = event.currentTarget.value;
@@ -900,20 +979,23 @@ function ContactSection({
                     placeholder={placeholder}
                   />
                 </FieldGroup>
-                <FieldGroup label="Types" hint="Comma separated">
+                <FieldGroup label="Types" hint={getContactTypeHint(kind)}>
                   <input
                     value={entry.types.join(", ")}
                     onChange={(event) => {
                       const value = event.currentTarget.value;
                       onChange(index, (current) => ({
                         ...current,
-                        types: splitCommaSeparated(value),
+                        types: splitTypeList(value),
                       }));
                     }}
-                    placeholder="work, preferred"
+                    placeholder={getContactTypePlaceholder(kind)}
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    spellCheck={false}
                   />
                 </FieldGroup>
-                <FieldGroup label="Label">
+                <FieldGroup label="Label" hint="Optional human-readable display label.">
                   <input
                     value={entry.label ?? ""}
                     onChange={(event) => {
@@ -924,12 +1006,15 @@ function ContactSection({
                       }));
                     }}
                     placeholder="Optional display label"
+                    autoComplete="off"
                   />
                 </FieldGroup>
-                <FieldGroup label="Preference">
+                <FieldGroup label="Preference" hint="Optional positive number. Lower means more preferred.">
                   <input
                     type="number"
                     min="1"
+                    step="1"
+                    inputMode="numeric"
                     value={entry.pref ?? ""}
                     onChange={(event) => {
                       const value = event.currentTarget.value;
@@ -1006,7 +1091,7 @@ function AddressSection({ entries, onAdd, onChange, onMove, onRemove }: AddressS
               </div>
 
               <div className="grid grid--two">
-                <FieldGroup label="Street">
+                <FieldGroup label="Street" hint="House number and street name.">
                   <input
                     value={entry.street}
                     onChange={(event) => {
@@ -1017,9 +1102,11 @@ function AddressSection({ entries, onAdd, onChange, onMove, onRemove }: AddressS
                       }));
                     }}
                     placeholder="Example street 5"
+                    autoComplete="address-line1"
+                    autoCapitalize="words"
                   />
                 </FieldGroup>
-                <FieldGroup label="City">
+                <FieldGroup label="City" hint="Town or city.">
                   <input
                     value={entry.locality}
                     onChange={(event) => {
@@ -1030,9 +1117,11 @@ function AddressSection({ entries, onAdd, onChange, onMove, onRemove }: AddressS
                       }));
                     }}
                     placeholder="Berlin"
+                    autoComplete="address-level2"
+                    autoCapitalize="words"
                   />
                 </FieldGroup>
-                <FieldGroup label="Region">
+                <FieldGroup label="Region" hint="State, region or province.">
                   <input
                     value={entry.region}
                     onChange={(event) => {
@@ -1043,9 +1132,11 @@ function AddressSection({ entries, onAdd, onChange, onMove, onRemove }: AddressS
                       }));
                     }}
                     placeholder="Berlin"
+                    autoComplete="address-level1"
+                    autoCapitalize="words"
                   />
                 </FieldGroup>
-                <FieldGroup label="Postal code">
+                <FieldGroup label="Postal code" hint="ZIP or postal code.">
                   <input
                     value={entry.postalCode}
                     onChange={(event) => {
@@ -1056,9 +1147,10 @@ function AddressSection({ entries, onAdd, onChange, onMove, onRemove }: AddressS
                       }));
                     }}
                     placeholder="10115"
+                    autoComplete="postal-code"
                   />
                 </FieldGroup>
-                <FieldGroup label="Country">
+                <FieldGroup label="Country" hint="Country name, not ISO code.">
                   <input
                     value={entry.country}
                     onChange={(event) => {
@@ -1069,9 +1161,11 @@ function AddressSection({ entries, onAdd, onChange, onMove, onRemove }: AddressS
                       }));
                     }}
                     placeholder="Germany"
+                    autoComplete="country-name"
+                    autoCapitalize="words"
                   />
                 </FieldGroup>
-                <FieldGroup label="PO Box">
+                <FieldGroup label="PO Box" hint="Optional post office box.">
                   <input
                     value={entry.poBox}
                     onChange={(event) => {
@@ -1082,9 +1176,10 @@ function AddressSection({ entries, onAdd, onChange, onMove, onRemove }: AddressS
                       }));
                     }}
                     placeholder="Optional"
+                    autoCapitalize="words"
                   />
                 </FieldGroup>
-                <FieldGroup label="Extended address">
+                <FieldGroup label="Extended address" hint="Apartment, floor or building details.">
                   <input
                     value={entry.extended}
                     onChange={(event) => {
@@ -1095,22 +1190,30 @@ function AddressSection({ entries, onAdd, onChange, onMove, onRemove }: AddressS
                       }));
                     }}
                     placeholder="Floor, suite or building"
+                    autoComplete="address-line2"
+                    autoCapitalize="words"
                   />
                 </FieldGroup>
-                <FieldGroup label="Types" hint="Comma separated">
+                <FieldGroup
+                  label="Types"
+                  hint="Comma separated, for example work, home or postal."
+                >
                   <input
                     value={entry.types.join(", ")}
                     onChange={(event) => {
                       const value = event.currentTarget.value;
                       onChange(index, (current) => ({
                         ...current,
-                        types: splitCommaSeparated(value),
+                        types: splitTypeList(value),
                       }));
                     }}
                     placeholder="work, postal"
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    spellCheck={false}
                   />
                 </FieldGroup>
-                <FieldGroup label="Label">
+                <FieldGroup label="Label" hint="Optional display label for this address.">
                   <input
                     value={entry.label ?? ""}
                     onChange={(event) => {
@@ -1121,12 +1224,15 @@ function AddressSection({ entries, onAdd, onChange, onMove, onRemove }: AddressS
                       }));
                     }}
                     placeholder="Optional display label"
+                    autoComplete="off"
                   />
                 </FieldGroup>
-                <FieldGroup label="Preference">
+                <FieldGroup label="Preference" hint="Optional positive number. Lower means more preferred.">
                   <input
                     type="number"
                     min="1"
+                    step="1"
+                    inputMode="numeric"
                     value={entry.pref ?? ""}
                     onChange={(event) => {
                       const value = event.currentTarget.value;
@@ -1217,6 +1323,13 @@ function moveItem<T>(items: T[], index: number, direction: -1 | 1): T[] {
 function splitCommaSeparated(value: string): string[] {
   return value
     .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function splitTypeList(value: string): string[] {
+  return value
+    .split(",")
     .map((part) => part.trim().toLowerCase())
     .filter(Boolean);
 }
@@ -1270,6 +1383,70 @@ function readFileAsPhotoValue(file: File): Promise<PhotoValue> {
 function inferMediaTypeFromDataUri(value: string): string | undefined {
   const match = /^data:([^;,]+)[;,]/iu.exec(value);
   return match?.[1]?.toLowerCase();
+}
+
+function getContactValueHint(kind: ContactKind): string {
+  switch (kind) {
+    case "email":
+      return "Use one full email address, for example jane@example.com.";
+    case "phone":
+      return "Use one phone number. International format is safest.";
+    case "url":
+      return "Use a full URL including the scheme, for example https://.";
+  }
+}
+
+function getContactTypeHint(kind: ContactKind): string {
+  switch (kind) {
+    case "email":
+      return "Comma separated, for example work, home or internet.";
+    case "phone":
+      return "Comma separated, for example cell, work, home or fax.";
+    case "url":
+      return "Comma separated, for example work, profile or booking.";
+  }
+}
+
+function getContactTypePlaceholder(kind: ContactKind): string {
+  switch (kind) {
+    case "email":
+      return "work, home";
+    case "phone":
+      return "cell, work";
+    case "url":
+      return "work, profile";
+  }
+}
+
+function getContactValueInputProps(kind: ContactKind) {
+  switch (kind) {
+    case "email":
+      return {
+        type: "email" as const,
+        inputMode: "email" as const,
+        autoComplete: "email",
+        autoCapitalize: "off" as const,
+        autoCorrect: "off" as const,
+        spellCheck: false,
+      };
+    case "phone":
+      return {
+        type: "tel" as const,
+        inputMode: "tel" as const,
+        autoComplete: "tel",
+        autoCorrect: "off" as const,
+        spellCheck: false,
+      };
+    case "url":
+      return {
+        type: "url" as const,
+        inputMode: "url" as const,
+        autoComplete: "url",
+        autoCapitalize: "off" as const,
+        autoCorrect: "off" as const,
+        spellCheck: false,
+      };
+  }
 }
 
 function buildSuggestedPath(sourcePath: string | null, document: VCardDocument): string {

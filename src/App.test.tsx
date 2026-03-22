@@ -14,9 +14,23 @@ describe("App", () => {
   it("allows adding and editing an email entry without crashing", async () => {
     render(<App />);
 
-    fireEvent.click(screen.getByRole("button", { name: /new blank/i }));
+    fireEvent.click(screen.getByRole("button", { name: /start blank/i }));
+    const formattedNameInput = await screen.findByLabelText(/^formatted name \(fn\)$/i);
+
+    expect(formattedNameInput).toHaveAttribute("autocomplete", "name");
+    expect(formattedNameInput).toBeRequired();
+
     fireEvent.click(await screen.findByRole("button", { name: /add email/i }));
-    fireEvent.change(screen.getByLabelText(/^value$/i), {
+    const emailInput = screen.getByLabelText(/^value$/i);
+
+    expect(emailInput).toHaveAttribute("type", "email");
+    expect(emailInput).toHaveAttribute("autocomplete", "email");
+    expect(emailInput).toHaveAttribute("inputmode", "email");
+    expect(emailInput).toHaveAccessibleDescription(
+      "Use one full email address, for example jane@example.com.",
+    );
+
+    fireEvent.change(emailInput, {
       target: { value: "jane@example.com" },
     });
 

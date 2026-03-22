@@ -368,9 +368,27 @@ textarea {
   gap: 0.45rem;
 }
 
+.field-group__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
 .field-group__label {
   font-size: 0.9rem;
   font-weight: 700;
+}
+
+.field-group__required {
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(196, 139, 47, 0.14);
+  color: #8c5a1b;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .field-group__hint {
