@@ -106,9 +106,14 @@ export function decodeQuotedPrintable(value: string, charset = "utf-8"): string 
     const char = normalized[index];
     const hexPair = normalized.slice(index + 1, index + 3);
 
-    if (char === "=" && /^[0-9A-Fa-f]{2}$/u.test(hexPair)) {
-      bytes.push(Number.parseInt(hexPair, 16));
-      index += 2;
+    if (char === "=") {
+      if (/^[0-9A-Fa-f]{2}$/u.test(hexPair)) {
+        bytes.push(Number.parseInt(hexPair, 16));
+        index += 2;
+        continue;
+      }
+
+      // After vCard line unfolding, quoted-printable soft breaks show up as a bare "=".
       continue;
     }
 
