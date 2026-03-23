@@ -114,6 +114,64 @@ textarea::placeholder {
   color: var(--text-subtle);
 }
 
+.date-input {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.date-input__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.date-input__actions {
+  display: inline-flex;
+  gap: 0.45rem;
+}
+
+.date-input__button {
+  padding: 0.72rem 0.88rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--text-strong);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  box-shadow:
+    0 3px 10px rgba(15, 23, 42, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease;
+}
+
+.date-input__button:hover {
+  border-color: var(--border-strong);
+  box-shadow:
+    0 5px 12px rgba(15, 23, 42, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+.date-input__button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.date-input__button--secondary {
+  background: rgba(246, 248, 252, 0.88);
+}
+
+.date-input__meta {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
 input:hover,
 select:hover,
 textarea:hover {
@@ -1125,6 +1183,18 @@ textarea {
   }
 
   .mode-tab {
+    flex: 1 1 0;
+  }
+
+  .date-input__row {
+    grid-template-columns: 1fr;
+  }
+
+  .date-input__actions {
+    width: 100%;
+  }
+
+  .date-input__button {
     flex: 1 1 0;
   }
 }

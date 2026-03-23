@@ -45,6 +45,7 @@ import {
   saveVcfAs,
   writeVcfFile,
 } from "./lib/file";
+import { DateInputField } from "./components/DateInputField";
 import {
   AddressSection,
   ContactSection,
@@ -2509,6 +2510,13 @@ function PatchTextField({
 }: PatchTextFieldComponentProps) {
   const content = multiline ? (
     <textarea value={value} onChange={(event) => onValueChange(event.currentTarget.value)} rows={5} />
+  ) : type === "date" ? (
+    <DateInputField
+      value={value}
+      onChange={onValueChange}
+      pickerLabel={`Open ${label.toLowerCase()} picker`}
+      clearLabel={`Clear ${label.toLowerCase()}`}
+    />
   ) : (
     <input type={type} value={value} onChange={(event) => onValueChange(event.currentTarget.value)} />
   );

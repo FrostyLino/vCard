@@ -4,6 +4,7 @@ import {
   useId,
   type ReactNode,
 } from "react";
+import { DateInputField } from "./DateInputField";
 import { unfoldVCardLines } from "../lib/vcard/utils";
 import type {
   AddressValue,
@@ -238,24 +239,24 @@ export function DocumentForm({ document, controller }: DocumentFormProps) {
             label="Birthday"
             hint="Use a full date such as 1988-04-12 for the best interoperability."
           >
-            <input
-              type="date"
+            <DateInputField
               value={document.birthday}
-              onChange={(event) => controller.updateTextField("birthday", event.currentTarget.value)}
+              onChange={(value) => controller.updateTextField("birthday", value)}
               placeholder="1988-04-12"
+              pickerLabel="Open birthday picker"
+              clearLabel="Clear birthday"
             />
           </FieldGroup>
           <FieldGroup
             label="Anniversary"
             hint="Use a full date such as 2018-09-01 if you want to store it explicitly."
           >
-            <input
-              type="date"
+            <DateInputField
               value={document.anniversary}
-              onChange={(event) =>
-                controller.updateTextField("anniversary", event.currentTarget.value)
-              }
+              onChange={(value) => controller.updateTextField("anniversary", value)}
               placeholder="2018-09-01"
+              pickerLabel="Open anniversary picker"
+              clearLabel="Clear anniversary"
             />
           </FieldGroup>
         </div>

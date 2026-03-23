@@ -118,6 +118,35 @@ describe("App", () => {
     expect(screen.getByText(/^rev$/i)).toBeInTheDocument();
   });
 
+  it("shows practical date picker controls and can clear a selected birthday", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /start blank/i }));
+    const birthdayInput = await screen.findByLabelText(/^birthday$/i);
+    const openBirthdayPickerButton = screen.getByRole("button", {
+      name: /open birthday picker/i,
+    });
+    const clearBirthdayButton = screen.getByRole("button", {
+      name: /clear birthday/i,
+    });
+
+    expect(birthdayInput).toHaveAttribute("type", "date");
+    expect(openBirthdayPickerButton).toBeInTheDocument();
+    expect(clearBirthdayButton).toBeDisabled();
+
+    fireEvent.change(birthdayInput, {
+      target: { value: "1988-04-12" },
+    });
+
+    expect(clearBirthdayButton).toBeEnabled();
+    expect(screen.getByText(/BDAY:1988-04-12/i)).toBeInTheDocument();
+
+    fireEvent.click(clearBirthdayButton);
+
+    expect(birthdayInput).toHaveValue("");
+    expect(screen.queryByText(/BDAY:1988-04-12/i)).not.toBeInTheDocument();
+  });
+
   it("opens a selected vCard file and populates the editor", async () => {
     openVcfMock.mockResolvedValue("/tmp/jane.vcf");
     readVcfFileMock.mockResolvedValue(
