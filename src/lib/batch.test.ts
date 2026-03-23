@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyBatchPatch,
   buildBatchPreviewSummary,
+  createBatchDraftItems,
   createBatchItem,
   createEmptyBatchPatch,
   createFailedBatchItem,
@@ -72,6 +73,47 @@ describe("batch helpers", () => {
     };
 
     expect(isBatchItemDirty(dirtyItem)).toBe(true);
+  });
+
+  it("keeps freshly imported files clean when managed metadata is still missing", () => {
+    const content = serializeVcf({
+      ...createEmptyDocument("4.0"),
+      formattedName: "Metadata Later",
+    });
+    const item = createBatchItem("/tmp/metadata-later.vcf", content);
+
+    expect(item.document?.uid).toBe("");
+    expect(item.document?.prodId).toBe("");
+    expect(isBatchItemDirty(item)).toBe(false);
+
+    const preview = buildBatchPreviewSummary([item], [item.id], {
+      writeMode: "in-place",
+      timestamp: new Date("2026-03-23T08:15:00Z"),
+    });
+
+    expect(preview.writeCount).toBe(0);
+    expect(preview.skipCount).toBe(1);
+    expect(preview.entries[0]?.reason).toMatch(/no changes to write/i);
+  });
+
+  it("creates numbered draft batch items that require export before they exist on disk", () => {
+    const items = createBatchDraftItems({
+      baseName: "Conference Guest",
+      count: 2,
+      startIndex: 4,
+      version: "3.0",
+    });
+
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({
+      sourceKind: "draft",
+      sourcePath: "conference-guest-4.vcf",
+      savedSnapshot: "",
+    });
+    expect(items[0]?.document?.formattedName).toBe("Conference Guest 4");
+    expect(items[0]?.document?.version).toBe("3.0");
+    expect(isBatchItemDirty(items[0]!)).toBe(true);
+    expect(items[1]?.sourcePath).toBe("conference-guest-5.vcf");
   });
 
   it("detects when a batch patch actually changes something", () => {
@@ -211,6 +253,35 @@ describe("batch helpers", () => {
     expect(preview.entries.find((entry) => entry.itemId === failed.id)?.reason).toMatch(
       /could not be parsed/i,
     );
+  });
+
+  it("forces draft batch items to use an output directory instead of in-place writes", () => {
+    const [draft] = createBatchDraftItems({
+      baseName: "Launch Contact",
+      count: 1,
+    });
+
+    const inPlacePreview = buildBatchPreviewSummary([draft], [draft.id], {
+      writeMode: "in-place",
+      timestamp: new Date("2026-03-23T08:15:00Z"),
+    });
+
+    expect(inPlacePreview.writeCount).toBe(0);
+    expect(inPlacePreview.skipCount).toBe(1);
+    expect(inPlacePreview.entries[0]?.reason).toMatch(/exported to an output folder/i);
+
+    const outputPreview = buildBatchPreviewSummary([draft], [draft.id], {
+      writeMode: "output-directory",
+      outputDirectory: "/tmp/export",
+      timestamp: new Date("2026-03-23T08:15:00Z"),
+    });
+
+    expect(outputPreview.writeCount).toBe(1);
+    expect(outputPreview.entries[0]).toMatchObject({
+      action: "write",
+      sourcePath: "launch-contact.vcf",
+      targetPath: "/tmp/export/launch-contact.vcf",
+    });
   });
 
   it("skips unchanged files when previewing without an actual mutation", () => {

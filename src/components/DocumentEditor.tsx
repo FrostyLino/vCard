@@ -4,6 +4,7 @@ import {
   useId,
   type ReactNode,
 } from "react";
+import { unfoldVCardLines } from "../lib/vcard/utils";
 import type {
   AddressValue,
   ContactValue,
@@ -345,6 +346,8 @@ export function DocumentInsightsPanel({
   document,
   serializedDocument,
 }: DocumentInsightsPanelProps) {
+  const previewDocument = createPreviewDocument(serializedDocument);
+
   return (
     <>
       <SectionCard
@@ -373,7 +376,7 @@ export function DocumentInsightsPanel({
         title="Raw Preview"
         description="Current serialized vCard preview. Managed REV updates on save."
       >
-        <pre className="preview-panel">{serializedDocument}</pre>
+        <pre className="preview-panel">{previewDocument}</pre>
       </SectionCard>
     </>
   );
@@ -386,11 +389,13 @@ interface SectionCardProps {
 }
 
 export function SectionCard({ title, description, children }: SectionCardProps) {
+  const headingId = `section-${useId().replace(/:/gu, "")}`;
+
   return (
-    <section className="section-card">
+    <section className="section-card" aria-labelledby={headingId}>
       <div className="section-card__header">
         <div>
-          <h2>{title}</h2>
+          <h2 id={headingId}>{title}</h2>
           <p>{description}</p>
         </div>
       </div>
@@ -498,6 +503,7 @@ export function ContactSection({
                   <button
                     type="button"
                     className="icon-button"
+                    aria-label={`Move ${title} entry ${index + 1} up`}
                     onClick={() => onMove(index, -1)}
                     disabled={index === 0}
                   >
@@ -506,6 +512,7 @@ export function ContactSection({
                   <button
                     type="button"
                     className="icon-button"
+                    aria-label={`Move ${title} entry ${index + 1} down`}
                     onClick={() => onMove(index, 1)}
                     disabled={index === entries.length - 1}
                   >
@@ -514,6 +521,7 @@ export function ContactSection({
                   <button
                     type="button"
                     className="icon-button icon-button--danger"
+                    aria-label={`Remove ${title} entry ${index + 1}`}
                     onClick={() => onRemove(index)}
                   >
                     Remove
@@ -627,6 +635,7 @@ export function AddressSection({ entries, onAdd, onChange, onMove, onRemove }: A
                   <button
                     type="button"
                     className="icon-button"
+                    aria-label={`Move address ${index + 1} up`}
                     onClick={() => onMove(index, -1)}
                     disabled={index === 0}
                   >
@@ -635,6 +644,7 @@ export function AddressSection({ entries, onAdd, onChange, onMove, onRemove }: A
                   <button
                     type="button"
                     className="icon-button"
+                    aria-label={`Move address ${index + 1} down`}
                     onClick={() => onMove(index, 1)}
                     disabled={index === entries.length - 1}
                   >
@@ -643,6 +653,7 @@ export function AddressSection({ entries, onAdd, onChange, onMove, onRemove }: A
                   <button
                     type="button"
                     className="icon-button icon-button--danger"
+                    aria-label={`Remove address ${index + 1}`}
                     onClick={() => onRemove(index)}
                   >
                     Remove
@@ -1003,4 +1014,27 @@ function formatField(field: string): string {
   }
 
   return field.replace(/\./gu, " / ");
+}
+
+function createPreviewDocument(serializedDocument: string): string {
+  return unfoldVCardLines(serializedDocument)
+    .filter((line) => line.length > 0)
+    .map((line) => truncateEmbeddedPhotoLine(line))
+    .join("\n");
+}
+
+function truncateEmbeddedPhotoLine(line: string): string {
+  const separatorIndex = line.indexOf(":");
+  if (separatorIndex < 0) {
+    return line;
+  }
+
+  const name = line.slice(0, separatorIndex);
+  const value = line.slice(separatorIndex + 1);
+
+  if (!/^(?:[^.:]+\.)?PHOTO(?:;|$)/iu.test(name) || !value.startsWith("data:")) {
+    return line;
+  }
+
+  return `${name}:${value.slice(0, 10)}...`;
 }

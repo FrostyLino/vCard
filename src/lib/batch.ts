@@ -1,4 +1,5 @@
 import {
+  createEmptyDocument,
   ensureManagedMetadata,
   parseVcf,
   serializeVcf,
@@ -11,9 +12,11 @@ import {
   type StructuredName,
   type ValidationIssue,
   type VCardDocument,
+  type VCardVersion,
 } from "./vcard";
 
 export type BatchItemStatus = "ready" | "updated" | "skipped" | "failed";
+export type BatchItemSourceKind = "file" | "draft";
 export type BatchWriteMode = "in-place" | "output-directory";
 export type ScalarPatchMode = "keep" | "replace" | "clear";
 export type ListPatchMode = "keep" | "replace" | "append" | "clear";
@@ -22,6 +25,7 @@ export type PhotoPatchMode = "keep" | "replace" | "clear";
 export interface BatchItem {
   id: string;
   sourcePath: string;
+  sourceKind: BatchItemSourceKind;
   document: VCardDocument | null;
   savedSnapshot: string;
   persistedContent: string;
@@ -85,6 +89,13 @@ export interface BatchPreviewSummary {
   errorCount: number;
 }
 
+export interface BatchDraftCreationOptions {
+  baseName: string;
+  count: number;
+  startIndex?: number;
+  version?: VCardVersion;
+}
+
 export function createBatchItem(sourcePath: string, content: string): BatchItem {
   const result = parseVcf(content);
   return toBatchItem(sourcePath, content, result);
@@ -94,6 +105,7 @@ export function createFailedBatchItem(sourcePath: string, error: string): BatchI
   return {
     id: sourcePath,
     sourcePath,
+    sourceKind: "file",
     document: null,
     savedSnapshot: "",
     persistedContent: "",
@@ -101,6 +113,44 @@ export function createFailedBatchItem(sourcePath: string, error: string): BatchI
     status: "failed",
     statusMessage: error,
   };
+}
+
+export function createBatchDraftItems({
+  baseName,
+  count,
+  startIndex = 1,
+  version = "4.0",
+}: BatchDraftCreationOptions): BatchItem[] {
+  const normalizedBaseName = baseName.trim();
+  const normalizedCount = Math.max(1, Math.floor(count));
+  const normalizedStartIndex = Math.max(1, Math.floor(startIndex));
+  const slugBaseName = slugifyDraftName(normalizedBaseName) || "contact";
+
+  return Array.from({ length: normalizedCount }, (_, offset) => {
+    const sequence = normalizedStartIndex + offset;
+    const shouldNumber = normalizedCount > 1 || normalizedStartIndex > 1;
+    const formattedName = shouldNumber
+      ? `${normalizedBaseName} ${sequence}`
+      : normalizedBaseName;
+    const fileName = shouldNumber
+      ? `${slugBaseName}-${sequence}.vcf`
+      : `${slugBaseName}.vcf`;
+    const document = touchManagedMetadata({
+      ...createEmptyDocument(version),
+      formattedName,
+    });
+
+    return {
+      id: createBatchDraftId(),
+      sourcePath: fileName,
+      sourceKind: "draft",
+      document,
+      savedSnapshot: "",
+      persistedContent: "",
+      parseWarnings: [],
+      status: "ready",
+    };
+  });
 }
 
 export function getBatchItemValidationIssues(item: BatchItem): ValidationIssue[] {
@@ -214,7 +264,17 @@ export function buildBatchPreviewSummary(
       return createSkippedEntry(item, "The file could not be parsed and cannot be written.");
     }
 
+    if (item.sourceKind === "draft" && options.writeMode === "in-place") {
+      return createSkippedEntry(item, "Draft items must be exported to an output folder.");
+    }
+
     const baseDocument = options.patch ? applyBatchPatch(item.document, options.patch) : item.document;
+    const baseContent = serializeVcf(baseDocument);
+
+    if (item.sourceKind === "file" && baseContent === item.savedSnapshot) {
+      return createSkippedEntry(item, "No changes to write.");
+    }
+
     const documentToWrite = touchManagedMetadata(baseDocument, options.timestamp ?? new Date());
     const issues = validateVCardDocument(documentToWrite);
 
@@ -223,10 +283,6 @@ export function buildBatchPreviewSummary(
     }
 
     const content = serializeVcf(documentToWrite);
-
-    if (content === item.savedSnapshot) {
-      return createSkippedEntry(item, "No changes to write.", issues);
-    }
 
     const targetPath =
       options.writeMode === "output-directory"
@@ -268,7 +324,8 @@ function toBatchItem(sourcePath: string, content: string, result: ParseResult): 
   return {
     id: sourcePath,
     sourcePath,
-    document: ensureManagedMetadata(result.document),
+    sourceKind: "file",
+    document: result.document,
     savedSnapshot: serializeVcf(result.document),
     persistedContent: content,
     parseWarnings: result.warnings,
@@ -417,4 +474,20 @@ function resolveOutputPath(
 function buildBackupPath(sourcePath: string, timestampToken: string): string {
   const extensionlessPath = sourcePath.replace(/\.vcf$/iu, "");
   return `${extensionlessPath}.${timestampToken}.bak.vcf`;
+}
+
+function createBatchDraftId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `draft:${crypto.randomUUID()}`;
+  }
+
+  return `draft:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function slugifyDraftName(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-+|-+$/gu, "");
 }

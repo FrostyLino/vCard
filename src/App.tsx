@@ -14,10 +14,12 @@ import {
   type AddressValue,
   type ContactValue,
   type PhotoValue,
+  type VCardVersion,
   type VCardDocument,
 } from "./lib/vcard";
 import {
   buildBatchPreviewSummary,
+  createBatchDraftItems,
   createBatchItem,
   createEmptyBatchPatch,
   createFailedBatchItem,
@@ -64,11 +66,23 @@ interface BatchWorkspace {
   items: BatchItem[];
   selectedIds: string[];
   search: string;
+  creator: BatchCreatorState;
+  viewMode: BatchSetViewMode;
   patch: BatchPatch;
   preview: BatchPreviewSummary | null;
   writeMode: BatchWriteMode;
   outputDirectory: string | null;
 }
+
+interface BatchCreatorState {
+  baseName: string;
+  count: string;
+  startIndex: string;
+  version: VCardVersion;
+}
+
+type BatchSetViewMode = "overview" | "power-table";
+type PrimaryContactListKey = "emails" | "phones" | "urls";
 
 type WorkspaceMode = "single" | "batch";
 type PhotoTarget =
@@ -98,6 +112,8 @@ function App() {
     () => batch.items.filter((item) => matchesBatchSearch(item, batch.search)),
     [batch.items, batch.search],
   );
+  const batchCreator = batch.creator ?? createEmptyBatchCreatorState();
+  const batchViewMode = batch.viewMode ?? "overview";
   const selectedBatchItems = batch.items.filter((item) => batch.selectedIds.includes(item.id));
   const selectedValidBatchItems = selectedBatchItems.filter((item) => item.document);
   const selectedInvalidBatchItems = selectedBatchItems.filter((item) => !item.document);
@@ -314,6 +330,42 @@ function App() {
     }
   }
 
+  async function handleBatchCreateDrafts() {
+    const baseName = batchCreator.baseName.trim();
+
+    if (!baseName) {
+      await showError(
+        "Base name required",
+        "Enter a base name before creating batch drafts.",
+      );
+      return;
+    }
+
+    const count = parsePositiveInteger(batchCreator.count, 1);
+    const startIndex = parsePositiveInteger(batchCreator.startIndex, 1);
+    const drafts = createBatchDraftItems({
+      baseName,
+      count,
+      startIndex,
+      version: batchCreator.version,
+    });
+
+    updateBatch((current) => ({
+      ...current,
+      items: mergeBatchItems(current.items, drafts),
+      selectedIds: drafts.map((item) => item.id),
+      creator: {
+        ...(current.creator ?? createEmptyBatchCreatorState()),
+        startIndex: String(startIndex + count),
+      },
+      writeMode: "output-directory",
+    }));
+    setMode("batch");
+    setStatusMessage(
+      `Created ${drafts.length} batch draft(s). Choose an output folder to export them.`,
+    );
+  }
+
   async function handleBatchOpenFolder() {
     try {
       const folderPath = await openVcfFolder();
@@ -389,6 +441,8 @@ function App() {
           document?: VCardDocument | null;
           content?: string;
           outputPath?: string;
+          nextSourcePath?: string;
+          nextSourceKind?: BatchItem["sourceKind"];
           updateSavedSnapshot: boolean;
         }
       >();
@@ -424,13 +478,18 @@ function App() {
           }
 
           await writeVcfFile(entry.targetPath, entry.content);
+          const shouldAdoptOutputPath = sourceItem.sourceKind === "draft";
           itemResults.set(entry.itemId, {
             status: "updated",
-            message: `Exported to ${getPathLabel(entry.targetPath)}.`,
+            message: shouldAdoptOutputPath
+              ? `Created ${getPathLabel(entry.targetPath)}.`
+              : `Exported to ${getPathLabel(entry.targetPath)}.`,
             document: entry.document,
             content: entry.content,
-            outputPath: entry.targetPath,
-            updateSavedSnapshot: false,
+            outputPath: shouldAdoptOutputPath ? undefined : entry.targetPath,
+            nextSourcePath: shouldAdoptOutputPath ? entry.targetPath : undefined,
+            nextSourceKind: shouldAdoptOutputPath ? "file" : undefined,
+            updateSavedSnapshot: shouldAdoptOutputPath,
           });
         } catch (error) {
           itemResults.set(entry.itemId, {
@@ -451,6 +510,8 @@ function App() {
             if (writeResult.updateSavedSnapshot && writeResult.content && writeResult.document) {
               return {
                 ...item,
+                sourcePath: writeResult.nextSourcePath ?? item.sourcePath,
+                sourceKind: writeResult.nextSourceKind ?? item.sourceKind,
                 document: writeResult.document,
                 savedSnapshot: writeResult.content,
                 persistedContent: writeResult.content,
@@ -726,6 +787,71 @@ function App() {
     }));
   }
 
+  function updateBatchCreator(mutator: (creator: BatchCreatorState) => BatchCreatorState) {
+    updateBatch((current) => ({
+      ...current,
+      creator: mutator(current.creator ?? createEmptyBatchCreatorState()),
+    }));
+  }
+
+  function updateBatchItemTextField(
+    itemId: string,
+    field: "formattedName" | "title" | "role",
+    value: string,
+  ) {
+    updateBatchItemDocument(itemId, (document) => ({
+      ...document,
+      [field]: value,
+    }));
+  }
+
+  function updateBatchItemOrganization(itemId: string, value: string) {
+    updateBatchItemDocument(itemId, (document) => ({
+      ...document,
+      organizationUnits: splitSemicolonSeparated(value),
+    }));
+  }
+
+  function updateBatchItemPrimaryContactValue(
+    itemId: string,
+    key: PrimaryContactListKey,
+    value: string,
+  ) {
+    updateBatchItemDocument(itemId, (document) => ({
+      ...document,
+      [key]: updatePrimaryContactValues(document[key], value),
+    }));
+  }
+
+  function selectOnlyBatchItem(itemId: string) {
+    updateBatch((current) => ({
+      ...current,
+      selectedIds: [itemId],
+    }));
+  }
+
+  function setBatchItemSelection(itemId: string, checked: boolean) {
+    updateBatch((current) => ({
+      ...current,
+      selectedIds: checked
+        ? Array.from(new Set([...current.selectedIds, itemId]))
+        : current.selectedIds.filter((id) => id !== itemId),
+    }));
+  }
+
+  function ensureBatchItemSelected(itemId: string) {
+    updateBatch((current) => {
+      if (current.selectedIds.includes(itemId)) {
+        return current;
+      }
+
+      return {
+        ...current,
+        selectedIds: [...current.selectedIds, itemId],
+      };
+    });
+  }
+
   function handleChoosePhoto(target: Exclude<PhotoTarget, null>) {
     setPhotoTarget(target);
     photoInputRef.current?.click();
@@ -790,7 +916,10 @@ function App() {
   const singleController = createSingleController();
 
   return (
-    <main className={`app-shell${dragActive ? " app-shell--drag" : ""}`}>
+    <main
+      className={`app-shell${dragActive ? " app-shell--drag" : ""}`}
+      aria-busy={busyLabel ? true : undefined}
+    >
       <div className="background-glow background-glow--top" />
       <div className="background-glow background-glow--bottom" />
       <input
@@ -832,7 +961,7 @@ function App() {
           </div>
           <div className="meta-card">
             <span className="meta-card__label">
-              {mode === "single" ? "File" : "Imported files"}
+              {mode === "single" ? "File" : "Batch items"}
             </span>
             <strong>
               {mode === "single"
@@ -893,7 +1022,7 @@ function App() {
         </div>
       </header>
 
-      <div className="status-bar">
+      <div className="status-bar" role="status" aria-live="polite" aria-atomic="true">
         <span
           className={`status-pill${
             (mode === "single" && isDirty) || (mode === "batch" && batchHasUnsavedWork)
@@ -978,7 +1107,7 @@ function App() {
           <div className="editor-column">
             <SectionCard
               title="Batch set"
-              description="Import many vCards, search them, select them and prepare a safe apply run."
+              description="Import existing vCards or generate new drafts, then select them for editing, patching and export."
             >
               <div className="batch-toolbar">
                 <div className="batch-toolbar__actions">
@@ -1004,12 +1133,13 @@ function App() {
                   >
                     <input
                       value={batch.search}
-                      onChange={(event) =>
+                      onChange={(event) => {
+                        const search = event.currentTarget.value;
                         updateBatch((current) => ({
                           ...current,
-                          search: event.currentTarget.value,
-                        }))
-                      }
+                          search,
+                        }));
+                      }}
                       placeholder="Search the batch set"
                       autoComplete="off"
                     />
@@ -1017,9 +1147,49 @@ function App() {
                 </div>
               </div>
 
+              {batch.items.length > 0 ? (
+                <div className="batch-view-row">
+                  <div className="mode-tabs batch-view-tabs" role="tablist" aria-label="Batch set view">
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={batchViewMode === "overview"}
+                      className={`mode-tab${batchViewMode === "overview" ? " mode-tab--active" : ""}`}
+                      onClick={() =>
+                        updateBatch((current) => ({
+                          ...current,
+                          viewMode: "overview",
+                        }))
+                      }
+                    >
+                      Overview
+                    </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={batchViewMode === "power-table"}
+                      className={`mode-tab${batchViewMode === "power-table" ? " mode-tab--active" : ""}`}
+                      onClick={() =>
+                        updateBatch((current) => ({
+                          ...current,
+                          viewMode: "power-table",
+                        }))
+                      }
+                    >
+                      Power user table
+                    </button>
+                  </div>
+                  <p className="batch-view-hint">
+                    {batchViewMode === "power-table"
+                      ? "Fast inline editing for the visible valid rows. Use it for names, organization, title, role, email, phone and website."
+                      : "Switch to the power user table if you want to edit the most important fields for many contacts inline without opening each inspector."}
+                  </p>
+                </div>
+              ) : null}
+
               {batch.items.length === 0 ? (
                 <p className="section-empty">
-                  No batch items yet. Add multiple `.vcf` files or import a folder to start.
+                  No batch items yet. Import multiple `.vcf` files, load a folder or create fresh drafts to start.
                 </p>
               ) : (
                 <div className="batch-table-wrap">
@@ -1059,87 +1229,111 @@ function App() {
                     </span>
                   </div>
 
-                  <table className="batch-table">
-                    <thead>
-                      <tr>
-                        <th>Select</th>
-                        <th>File</th>
-                        <th>Formatted name</th>
-                        <th>Organization</th>
-                        <th>Title</th>
-                        <th>Role</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {visibleBatchItems.map((item) => {
-                        const document = item.document;
-                        const itemIssues = getBatchItemValidationIssues(item);
-                        const isSelected = batch.selectedIds.includes(item.id);
+                  {batchViewMode === "power-table" ? (
+                    <div className="batch-table-scroll">
+                      <BatchPowerTable
+                        items={visibleBatchItems}
+                        selectedIds={batch.selectedIds}
+                        onSelectRow={selectOnlyBatchItem}
+                        onToggleSelection={setBatchItemSelection}
+                        onEnsureSelection={ensureBatchItemSelected}
+                        onUpdateFormattedName={(itemId, value) =>
+                          updateBatchItemTextField(itemId, "formattedName", value)
+                        }
+                        onUpdateOrganization={updateBatchItemOrganization}
+                        onUpdateEmail={(itemId, value) =>
+                          updateBatchItemPrimaryContactValue(itemId, "emails", value)
+                        }
+                        onUpdatePhone={(itemId, value) =>
+                          updateBatchItemPrimaryContactValue(itemId, "phones", value)
+                        }
+                        onUpdateUrl={(itemId, value) =>
+                          updateBatchItemPrimaryContactValue(itemId, "urls", value)
+                        }
+                        onUpdateTitle={(itemId, value) =>
+                          updateBatchItemTextField(itemId, "title", value)
+                        }
+                        onUpdateRole={(itemId, value) =>
+                          updateBatchItemTextField(itemId, "role", value)
+                        }
+                      />
+                    </div>
+                  ) : (
+                    <div className="batch-table-scroll">
+                      <table className="batch-table">
+                        <thead>
+                          <tr>
+                            <th>Select</th>
+                            <th>File</th>
+                            <th>Formatted name</th>
+                            <th>Organization</th>
+                            <th>Title</th>
+                            <th>Role</th>
+                            <th>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {visibleBatchItems.map((item) => {
+                            const document = item.document;
+                            const itemIssues = getBatchItemValidationIssues(item);
+                            const isSelected = batch.selectedIds.includes(item.id);
 
-                        return (
-                          <tr
-                            key={item.id}
-                            className={isSelected ? "batch-table__row batch-table__row--selected" : "batch-table__row"}
-                            onClick={() => {
-                              if (!document) {
-                                return;
-                              }
-
-                              updateBatch((current) => ({
-                                ...current,
-                                selectedIds: [item.id],
-                              }));
-                            }}
-                          >
-                            <td>
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                disabled={!document}
-                                onChange={(event) => {
-                                  event.stopPropagation();
-
+                            return (
+                              <tr
+                                key={item.id}
+                                className={
+                                  isSelected
+                                    ? "batch-table__row batch-table__row--selected"
+                                    : "batch-table__row"
+                                }
+                                onClick={() => {
                                   if (!document) {
                                     return;
                                   }
 
-                                  updateBatch((current) => ({
-                                    ...current,
-                                    selectedIds: event.currentTarget.checked
-                                      ? Array.from(new Set([...current.selectedIds, item.id]))
-                                      : current.selectedIds.filter((id) => id !== item.id),
-                                  }));
+                                  selectOnlyBatchItem(item.id);
                                 }}
-                              />
-                            </td>
-                            <td>{getPathLabel(item.sourcePath)}</td>
-                            <td>{document?.formattedName || "Unreadable file"}</td>
-                            <td>{document?.organizationUnits[0] ?? "—"}</td>
-                            <td>{document?.title || "—"}</td>
-                            <td>{document?.role || "—"}</td>
-                            <td>
-                              <div className="batch-status-cell">
-                                <span className={`status-pill${item.status === "failed" ? " status-pill--warning" : ""}`}>
-                                  {item.status}
-                                </span>
-                                <span className="batch-status-text">
-                                  {item.statusMessage ??
-                                    (item.parseWarnings.length > 0
-                                      ? `${item.parseWarnings.length} warning(s)`
-                                      : itemIssues.some((issue) => issue.level === "error")
-                                        ? "Validation errors"
-                                        : isBatchItemDirty(item)
-                                          ? "Unsaved item changes"
-                                          : "Ready")}
-                                </span>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                              >
+                                <td>
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    disabled={!document}
+                                    onChange={(event) => {
+                                      event.stopPropagation();
+
+                                      if (!document) {
+                                        return;
+                                      }
+
+                                      setBatchItemSelection(item.id, event.currentTarget.checked);
+                                    }}
+                                  />
+                                </td>
+                                <td>{getPathLabel(item.sourcePath)}</td>
+                                <td>{document?.formattedName || "Unreadable file"}</td>
+                                <td>{document?.organizationUnits.join("; ") || "—"}</td>
+                                <td>{document?.title || "—"}</td>
+                                <td>{document?.role || "—"}</td>
+                                <td>
+                                  <div className="batch-status-cell">
+                                    <span
+                                      className={`status-pill${item.status === "failed" ? " status-pill--warning" : ""}`}
+                                    >
+                                      {item.status}
+                                    </span>
+                                    <span className="batch-status-text">
+                                      {getBatchItemStatusText(item, itemIssues)}
+                                    </span>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               )}
             </SectionCard>
@@ -1148,11 +1342,11 @@ function App() {
           <aside className="side-column">
             {batch.items.length === 0 ? (
               <SectionCard
-                title="Batch editor"
-                description="The hybrid batch flow combines table selection with a full inspector and a patch panel."
+                title="Batch workspace"
+                description="Import files to edit existing contacts or create new drafts to build a fresh batch."
               >
                 <p className="section-empty">
-                  Import files first. One selected file opens the full editor here; multiple selected files open the patch builder.
+                  One selected valid item opens the full editor here. Multiple selected valid items open the patch builder for shared changes.
                 </p>
               </SectionCard>
             ) : selectedValidBatchItems.length === 1 ? (
@@ -1203,9 +1397,15 @@ function App() {
               </SectionCard>
             )}
 
+            <BatchCreatorPanel
+              creator={batchCreator}
+              onCreatorChange={updateBatchCreator}
+              onCreate={handleBatchCreateDrafts}
+            />
+
             <SectionCard
               title="Apply run"
-              description="Preview is mandatory before writing. Choose between in-place updates and an output folder."
+              description="Preview is mandatory before writing. Imported files can be updated in place; new drafts must be exported to an output folder."
             >
               <div className="stack">
                 <FieldGroup
@@ -1214,12 +1414,13 @@ function App() {
                 >
                   <select
                     value={batch.writeMode}
-                    onChange={(event) =>
+                    onChange={(event) => {
+                      const writeMode = event.currentTarget.value as BatchWriteMode;
                       updateBatch((current) => ({
                         ...current,
-                        writeMode: event.currentTarget.value as BatchWriteMode,
-                      }))
-                    }
+                        writeMode,
+                      }));
+                    }}
                   >
                     <option value="in-place">In-place with backups</option>
                     <option value="output-directory">Write copies to output folder</option>
@@ -1382,86 +1583,91 @@ function BatchPatchPanel({
               <FieldGroup label="Given name">
                 <input
                   value={patch.name.value.given}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    const given = event.currentTarget.value;
                     onPatchChange((current) => ({
                       ...current,
                       name: {
                         ...current.name,
                         value: {
                           ...current.name.value,
-                          given: event.currentTarget.value,
+                          given,
                         },
                       },
-                    }))
-                  }
+                    }));
+                  }}
                 />
               </FieldGroup>
               <FieldGroup label="Family name">
                 <input
                   value={patch.name.value.family}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    const family = event.currentTarget.value;
                     onPatchChange((current) => ({
                       ...current,
                       name: {
                         ...current.name,
                         value: {
                           ...current.name.value,
-                          family: event.currentTarget.value,
+                          family,
                         },
                       },
-                    }))
-                  }
+                    }));
+                  }}
                 />
               </FieldGroup>
               <FieldGroup label="Additional names">
                 <input
                   value={patch.name.value.additional}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    const additional = event.currentTarget.value;
                     onPatchChange((current) => ({
                       ...current,
                       name: {
                         ...current.name,
                         value: {
                           ...current.name.value,
-                          additional: event.currentTarget.value,
+                          additional,
                         },
                       },
-                    }))
-                  }
+                    }));
+                  }}
                 />
               </FieldGroup>
               <FieldGroup label="Prefix">
                 <input
                   value={patch.name.value.prefix}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    const prefix = event.currentTarget.value;
                     onPatchChange((current) => ({
                       ...current,
                       name: {
                         ...current.name,
                         value: {
                           ...current.name.value,
-                          prefix: event.currentTarget.value,
+                          prefix,
                         },
                       },
-                    }))
-                  }
+                    }));
+                  }}
                 />
               </FieldGroup>
               <FieldGroup label="Suffix">
                 <input
                   value={patch.name.value.suffix}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    const suffix = event.currentTarget.value;
                     onPatchChange((current) => ({
                       ...current,
                       name: {
                         ...current.name,
                         value: {
                           ...current.name.value,
-                          suffix: event.currentTarget.value,
+                          suffix,
                         },
                       },
-                    }))
-                  }
+                    }));
+                  }}
                 />
               </FieldGroup>
             </div>
@@ -1861,6 +2067,328 @@ function BatchPatchPanel({
   );
 }
 
+interface BatchCreatorPanelProps {
+  creator: BatchCreatorState;
+  onCreatorChange: (mutator: (creator: BatchCreatorState) => BatchCreatorState) => void;
+  onCreate: () => void;
+}
+
+interface BatchPowerTableProps {
+  items: BatchItem[];
+  selectedIds: string[];
+  onSelectRow: (itemId: string) => void;
+  onToggleSelection: (itemId: string, checked: boolean) => void;
+  onEnsureSelection: (itemId: string) => void;
+  onUpdateFormattedName: (itemId: string, value: string) => void;
+  onUpdateOrganization: (itemId: string, value: string) => void;
+  onUpdateEmail: (itemId: string, value: string) => void;
+  onUpdatePhone: (itemId: string, value: string) => void;
+  onUpdateUrl: (itemId: string, value: string) => void;
+  onUpdateTitle: (itemId: string, value: string) => void;
+  onUpdateRole: (itemId: string, value: string) => void;
+}
+
+function BatchPowerTable({
+  items,
+  selectedIds,
+  onSelectRow,
+  onToggleSelection,
+  onEnsureSelection,
+  onUpdateFormattedName,
+  onUpdateOrganization,
+  onUpdateEmail,
+  onUpdatePhone,
+  onUpdateUrl,
+  onUpdateTitle,
+  onUpdateRole,
+}: BatchPowerTableProps) {
+  return (
+    <table className="batch-table batch-table--power">
+      <thead>
+        <tr>
+          <th>Select</th>
+          <th>File</th>
+          <th>Formatted name</th>
+          <th>Email</th>
+          <th>Phone</th>
+          <th>Website</th>
+          <th>Organization</th>
+          <th>Title</th>
+          <th>Role</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((item) => {
+          const document = item.document;
+          const itemIssues = getBatchItemValidationIssues(item);
+          const isSelected = selectedIds.includes(item.id);
+          const pathLabel = getPathLabel(item.sourcePath);
+          const primaryEmail = getPrimaryContactValue(document?.emails ?? []);
+          const primaryPhone = getPrimaryContactValue(document?.phones ?? []);
+          const primaryUrl = getPrimaryContactValue(document?.urls ?? []);
+
+          return (
+            <tr
+              key={item.id}
+              className={isSelected ? "batch-table__row batch-table__row--selected" : "batch-table__row"}
+              onClick={() => {
+                if (!document) {
+                  return;
+                }
+
+                onSelectRow(item.id);
+              }}
+            >
+              <td>
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  disabled={!document}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) => {
+                    event.stopPropagation();
+
+                    if (!document) {
+                      return;
+                    }
+
+                    onToggleSelection(item.id, event.currentTarget.checked);
+                  }}
+                />
+              </td>
+              <td>{pathLabel}</td>
+              <td>
+                {document ? (
+                  <input
+                    className="table-input"
+                    value={primaryEmail?.value ?? ""}
+                    aria-label={`Email for ${pathLabel}`}
+                    placeholder="name@example.com"
+                    onClick={(event) => event.stopPropagation()}
+                    onFocus={() => onEnsureSelection(item.id)}
+                    onChange={(event) => onUpdateEmail(item.id, event.currentTarget.value)}
+                  />
+                ) : (
+                  "—"
+                )}
+              </td>
+              <td>
+                {document ? (
+                  <input
+                    className="table-input"
+                    value={primaryPhone?.value ?? ""}
+                    aria-label={`Phone for ${pathLabel}`}
+                    placeholder="+49 170 1234567"
+                    onClick={(event) => event.stopPropagation()}
+                    onFocus={() => onEnsureSelection(item.id)}
+                    onChange={(event) => onUpdatePhone(item.id, event.currentTarget.value)}
+                  />
+                ) : (
+                  "—"
+                )}
+              </td>
+              <td>
+                {document ? (
+                  <input
+                    className="table-input"
+                    value={primaryUrl?.value ?? ""}
+                    aria-label={`Website for ${pathLabel}`}
+                    placeholder="https://example.com"
+                    onClick={(event) => event.stopPropagation()}
+                    onFocus={() => onEnsureSelection(item.id)}
+                    onChange={(event) => onUpdateUrl(item.id, event.currentTarget.value)}
+                  />
+                ) : (
+                  "—"
+                )}
+              </td>
+              <td>
+                {document ? (
+                  <input
+                    className="table-input"
+                    value={document.formattedName}
+                    aria-label={`Formatted name for ${pathLabel}`}
+                    placeholder="Display name"
+                    onClick={(event) => event.stopPropagation()}
+                    onFocus={() => onEnsureSelection(item.id)}
+                    onChange={(event) => onUpdateFormattedName(item.id, event.currentTarget.value)}
+                  />
+                ) : (
+                  "Unreadable file"
+                )}
+              </td>
+              <td>
+                {document ? (
+                  <input
+                    className="table-input"
+                    value={document.organizationUnits.join("; ")}
+                    aria-label={`Organization for ${pathLabel}`}
+                    placeholder="Organization; Unit"
+                    onClick={(event) => event.stopPropagation()}
+                    onFocus={() => onEnsureSelection(item.id)}
+                    onChange={(event) => onUpdateOrganization(item.id, event.currentTarget.value)}
+                  />
+                ) : (
+                  "—"
+                )}
+              </td>
+              <td>
+                {document ? (
+                  <input
+                    className="table-input"
+                    value={document.title}
+                    aria-label={`Title for ${pathLabel}`}
+                    placeholder="Title"
+                    onClick={(event) => event.stopPropagation()}
+                    onFocus={() => onEnsureSelection(item.id)}
+                    onChange={(event) => onUpdateTitle(item.id, event.currentTarget.value)}
+                  />
+                ) : (
+                  "—"
+                )}
+              </td>
+              <td>
+                {document ? (
+                  <input
+                    className="table-input"
+                    value={document.role}
+                    aria-label={`Role for ${pathLabel}`}
+                    placeholder="Role"
+                    onClick={(event) => event.stopPropagation()}
+                    onFocus={() => onEnsureSelection(item.id)}
+                    onChange={(event) => onUpdateRole(item.id, event.currentTarget.value)}
+                  />
+                ) : (
+                  "—"
+                )}
+              </td>
+              <td>
+                <div className="batch-status-cell">
+                  <span className={`status-pill${item.status === "failed" ? " status-pill--warning" : ""}`}>
+                    {item.status}
+                  </span>
+                  <span className="batch-status-text">{getBatchItemStatusText(item, itemIssues)}</span>
+                </div>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function BatchCreatorPanel({
+  creator,
+  onCreatorChange,
+  onCreate,
+}: BatchCreatorPanelProps) {
+  const canCreate = creator.baseName.trim().length > 0;
+
+  return (
+    <SectionCard
+      title="Batch creator"
+      description="Generate numbered draft vCards directly into the batch set, then edit them individually or patch them together."
+    >
+      <div className="stack">
+        <div className="grid grid--two">
+          <FieldGroup
+            label="Base name"
+            hint="Used for both the display name (FN) and the suggested file name slug."
+            required
+          >
+            <input
+              value={creator.baseName}
+              onChange={(event) => {
+                const baseName = event.currentTarget.value;
+                onCreatorChange((current) => ({
+                  ...current,
+                  baseName,
+                }));
+              }}
+              placeholder="Conference Guest"
+              autoCapitalize="words"
+            />
+          </FieldGroup>
+
+          <FieldGroup
+            label="Version"
+            hint="Choose whether the created drafts start as vCard 3.0 or 4.0."
+          >
+            <select
+              value={creator.version}
+              onChange={(event) => {
+                const version = event.currentTarget.value as VCardVersion;
+                onCreatorChange((current) => ({
+                  ...current,
+                  version,
+                }));
+              }}
+            >
+              <option value="4.0">4.0</option>
+              <option value="3.0">3.0</option>
+            </select>
+          </FieldGroup>
+
+          <FieldGroup
+            label="Number of drafts"
+            hint="How many numbered contacts should be created in one step."
+          >
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={creator.count}
+              onChange={(event) => {
+                const count = event.currentTarget.value;
+                onCreatorChange((current) => ({
+                  ...current,
+                  count,
+                }));
+              }}
+            />
+          </FieldGroup>
+
+          <FieldGroup
+            label="Start index"
+            hint="The first number appended to the base name and file name."
+          >
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={creator.startIndex}
+              onChange={(event) => {
+                const startIndex = event.currentTarget.value;
+                onCreatorChange((current) => ({
+                  ...current,
+                  startIndex,
+                }));
+              }}
+            />
+          </FieldGroup>
+        </div>
+
+        <p className="section-empty">
+          Example: <strong>{buildBatchCreatorPreview(creator)}</strong>
+        </p>
+
+        <div className="batch-creator-actions">
+          <button
+            type="button"
+            className="button"
+            onClick={onCreate}
+            disabled={!canCreate}
+          >
+            Create drafts
+          </button>
+        </div>
+      </div>
+    </SectionCard>
+  );
+}
+
 interface PatchTextFieldProps {
   label: string;
   hint: string;
@@ -2107,6 +2635,8 @@ function createEmptyBatchWorkspace(): BatchWorkspace {
     items: [],
     selectedIds: [],
     search: "",
+    creator: createEmptyBatchCreatorState(),
+    viewMode: "overview",
     patch: createEmptyBatchPatch(),
     preview: null,
     writeMode: "in-place",
@@ -2204,6 +2734,58 @@ function moveItem<T>(items: T[], index: number, direction: -1 | 1): T[] {
   return nextItems;
 }
 
+function getPrimaryContactValue(values: ContactValue[]): ContactValue | null {
+  const primaryIndex = findPrimaryContactIndex(values);
+  return primaryIndex >= 0 ? values[primaryIndex] ?? null : null;
+}
+
+function updatePrimaryContactValues(values: ContactValue[], value: string): ContactValue[] {
+  const primaryIndex = findPrimaryContactIndex(values);
+  const hasMeaningfulValue = value.trim().length > 0;
+
+  if (primaryIndex < 0) {
+    return hasMeaningfulValue
+      ? [
+          {
+            ...createEmptyContactValue(),
+            value,
+          },
+        ]
+      : values;
+  }
+
+  if (!hasMeaningfulValue) {
+    return values.filter((_, index) => index !== primaryIndex);
+  }
+
+  return values.map((entry, index) =>
+    index === primaryIndex
+      ? {
+          ...entry,
+          value,
+        }
+      : entry,
+  );
+}
+
+function findPrimaryContactIndex(values: ContactValue[]): number {
+  let bestIndex = -1;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  values.forEach((entry, index) => {
+    const emptinessPenalty = entry.value.trim() ? 0 : 1_000;
+    const prefPenalty = entry.pref ?? 100;
+    const score = emptinessPenalty + prefPenalty + index / 1000;
+
+    if (score < bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  });
+
+  return bestIndex;
+}
+
 function splitCommaSeparated(value: string): string[] {
   return value
     .split(",")
@@ -2216,6 +2798,15 @@ function splitSemicolonSeparated(value: string): string[] {
     .split(";")
     .map((part) => part.trim())
     .filter(Boolean);
+}
+
+function createEmptyBatchCreatorState(): BatchCreatorState {
+  return {
+    baseName: "",
+    count: "3",
+    startIndex: "1",
+    version: "4.0",
+  };
 }
 
 function mergeBatchItems(existingItems: BatchItem[], newItems: BatchItem[]): BatchItem[] {
@@ -2246,6 +2837,26 @@ function matchesBatchSearch(item: BatchItem, query: string): boolean {
   ]
     .filter(Boolean)
     .some((value) => value?.toLowerCase().includes(loweredQuery));
+}
+
+function getBatchItemStatusText(item: BatchItem, issues: ReturnType<typeof getBatchItemValidationIssues>): string {
+  if (item.statusMessage) {
+    return item.statusMessage;
+  }
+
+  if (item.parseWarnings.length > 0) {
+    return `${item.parseWarnings.length} warning(s)`;
+  }
+
+  if (issues.some((issue) => issue.level === "error")) {
+    return "Validation errors";
+  }
+
+  if (item.sourceKind === "draft") {
+    return isBatchItemDirty(item) ? "Draft not exported yet" : "Ready";
+  }
+
+  return isBatchItemDirty(item) ? "Unsaved item changes" : "Ready";
 }
 
 function readFileAsPhotoValue(file: File): Promise<PhotoValue> {
@@ -2283,14 +2894,31 @@ function buildSuggestedPath(sourcePath: string | null, document: VCardDocument):
     return sourcePath;
   }
 
-  const slug =
-    document.formattedName
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/gu, "-")
-      .replace(/^-+|-+$/gu, "") || "contact";
+  return `${slugifyFileName(document.formattedName)}.vcf`;
+}
 
-  return `${slug}.vcf`;
+function buildBatchCreatorPreview(creator: BatchCreatorState): string {
+  const baseName = creator.baseName.trim() || "Conference Guest";
+  const count = parsePositiveInteger(creator.count, 3);
+  const startIndex = parsePositiveInteger(creator.startIndex, 1);
+  const shouldNumber = count > 1 || startIndex > 1;
+  const suffix = shouldNumber ? ` ${startIndex}` : "";
+  return `${baseName}${suffix} -> ${slugifyFileName(baseName)}${shouldNumber ? `-${startIndex}` : ""}.vcf`;
+}
+
+function parsePositiveInteger(value: string, fallback: number): number {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function slugifyFileName(value: string): string {
+  const slug = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-+|-+$/gu, "");
+
+  return slug || "contact";
 }
 
 function isTauriRuntime(): boolean {

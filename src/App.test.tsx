@@ -289,14 +289,15 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: /open a vcard file/i }));
 
     expect(await screen.findByAltText(/contact profile/i)).toBeInTheDocument();
-    expect(screen.getByText(/PHOTO:data:image\/png;base64,ZmFrZQ==/i)).toBeInTheDocument();
+    expect(screen.getByText(/PHOTO:data:image\.\.\./i)).toBeInTheDocument();
+    expect(screen.queryByText(/PHOTO:data:image\/png;base64,ZmFrZQ==/i)).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /remove image/i }));
 
     await waitFor(() => {
       expect(screen.queryByAltText(/contact profile/i)).not.toBeInTheDocument();
     });
-    expect(screen.queryByText(/PHOTO:data:image\/png;base64,ZmFrZQ==/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/PHOTO:data:image\.\.\./i)).not.toBeInTheDocument();
   });
 
   it("switches to batch mode and imports multiple files into the table", async () => {
@@ -351,6 +352,260 @@ describe("App", () => {
 
     expect(await screen.findByText("Folder Person")).toBeInTheDocument();
     expect(listVcfFilesInDirectoryMock).toHaveBeenCalledWith("/tmp/contacts");
+  });
+
+  it("creates batch draft contacts and exports them through the new creator flow", async () => {
+    chooseOutputDirectoryMock.mockResolvedValue("/tmp/generated");
+    writeVcfFileMock.mockResolvedValue(undefined);
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^batch$/i }));
+    expect(await screen.findByTestId("batch-workspace")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/^base name$/i), {
+      target: { value: "Conference Guest" },
+    });
+    fireEvent.change(screen.getByLabelText(/^number of drafts$/i), {
+      target: { value: "2" },
+    });
+    fireEvent.change(screen.getByLabelText(/^start index$/i), {
+      target: { value: "7" },
+    });
+    fireEvent.change(screen.getByLabelText(/^version$/i), {
+      target: { value: "3.0" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /create drafts/i }));
+
+    expect(await screen.findByText("Conference Guest 7")).toBeInTheDocument();
+    expect(screen.getByText("Conference Guest 8")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /batch patch/i })).toBeInTheDocument();
+    expect(
+      screen.getByText(/created 2 batch draft\(s\)\. choose an output folder to export them\./i),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /choose output folder/i }));
+    expect(await screen.findByText(/output: generated/i)).toBeInTheDocument();
+
+    const roleSection = screen.getByRole("heading", { name: /^role$/i }).closest("section");
+    expect(roleSection).not.toBeNull();
+    fireEvent.change(within(roleSection as HTMLElement).getByRole("combobox"), {
+      target: { value: "replace" },
+    });
+    fireEvent.change(within(roleSection as HTMLElement).getByLabelText(/^role$/i), {
+      target: { value: "Attendee" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /preview apply/i }));
+    expect(await screen.findByText(/preview prepared for 2 file\(s\)\./i)).toBeInTheDocument();
+    expect(screen.getByText(/will export conference-guest-7\.vcf\./i)).toBeInTheDocument();
+    expect(screen.getByText(/will export conference-guest-8\.vcf\./i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /apply changes/i }));
+
+    await waitFor(() => {
+      expect(writeVcfFileMock).toHaveBeenCalledTimes(2);
+    });
+
+    expect(writeVcfFileMock).toHaveBeenNthCalledWith(
+      1,
+      "/tmp/generated/conference-guest-7.vcf",
+      expect.stringContaining("FN:Conference Guest 7"),
+    );
+    expect(writeVcfFileMock.mock.calls[0]?.[1]).toContain("VERSION:3.0");
+    expect(writeVcfFileMock.mock.calls[0]?.[1]).toContain("ROLE:Attendee");
+    expect(writeVcfFileMock).toHaveBeenNthCalledWith(
+      2,
+      "/tmp/generated/conference-guest-8.vcf",
+      expect.stringContaining("FN:Conference Guest 8"),
+    );
+    expect(screen.getByText(/exported 2 batch file\(s\) to the chosen folder\./i)).toBeInTheDocument();
+  });
+
+  it("does not preview metadata-only writes for unchanged batch imports", async () => {
+    openManyVcfMock.mockResolvedValue(["/tmp/metadata-later.vcf"]);
+    readVcfFileMock.mockResolvedValue(
+      createVcf([
+        "BEGIN:VCARD",
+        "VERSION:4.0",
+        "FN:Metadata Later",
+        "END:VCARD",
+      ]),
+    );
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^batch$/i }));
+    expect(await screen.findByTestId("batch-workspace")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /add files/i }));
+    expect(await screen.findByText("Metadata Later")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /preview apply/i }));
+
+    expect(
+      await screen.findByText(/nothing would be written with the current selection and settings\./i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/no changes to write\./i)).toBeInTheDocument();
+  });
+
+  it("exports a batch patch to an output folder without creating in-place backups", async () => {
+    openManyVcfMock.mockResolvedValue(["/tmp/source/alice.vcf", "/tmp/source/bob.vcf"]);
+    chooseOutputDirectoryMock.mockResolvedValue("/tmp/exported");
+    readVcfFileMock.mockImplementation(async (path: string) =>
+      path.endsWith("alice.vcf")
+        ? createVcf([
+            "BEGIN:VCARD",
+            "VERSION:4.0",
+            "FN:Alice Example",
+            "UID:urn:uuid:alice",
+            "REV:2026-03-20T08:00:00Z",
+            "PRODID:-//vCard Editor//EN",
+            "END:VCARD",
+          ])
+        : createVcf([
+            "BEGIN:VCARD",
+            "VERSION:4.0",
+            "FN:Bob Example",
+            "UID:urn:uuid:bob",
+            "REV:2026-03-20T08:00:00Z",
+            "PRODID:-//vCard Editor//EN",
+            "END:VCARD",
+          ]),
+    );
+    writeVcfFileMock.mockResolvedValue(undefined);
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^batch$/i }));
+    expect(await screen.findByTestId("batch-workspace")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /add files/i }));
+    expect(await screen.findByText("Alice Example")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText(/select visible valid files/i));
+    expect(await screen.findByRole("heading", { name: /batch patch/i })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/^write mode$/i), {
+      target: { value: "output-directory" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /choose output folder/i }));
+
+    expect(await screen.findByText(/output: exported/i)).toBeInTheDocument();
+
+    const titleSection = screen.getByRole("heading", { name: /^title$/i }).closest("section");
+    expect(titleSection).not.toBeNull();
+    fireEvent.change(within(titleSection as HTMLElement).getByRole("combobox"), {
+      target: { value: "replace" },
+    });
+    fireEvent.change(within(titleSection as HTMLElement).getByLabelText(/^title$/i), {
+      target: { value: "Sales" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /preview apply/i }));
+    expect(await screen.findByText(/preview prepared for 2 file\(s\)\./i)).toBeInTheDocument();
+    expect(screen.getByText(/will export alice\.vcf\./i)).toBeInTheDocument();
+    expect(screen.getByText(/will export bob\.vcf\./i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /apply changes/i }));
+
+    await waitFor(() => {
+      expect(writeVcfFileMock).toHaveBeenCalledTimes(2);
+    });
+
+    expect(writeVcfFileMock).toHaveBeenNthCalledWith(
+      1,
+      "/tmp/exported/alice.vcf",
+      expect.stringContaining("TITLE:Sales"),
+    );
+    expect(writeVcfFileMock).toHaveBeenNthCalledWith(
+      2,
+      "/tmp/exported/bob.vcf",
+      expect.stringContaining("TITLE:Sales"),
+    );
+    expect(
+      writeVcfFileMock.mock.calls.some(([path]) => String(path).includes(".bak.vcf")),
+    ).toBe(false);
+    expect(
+      screen.getByText(/exported 2 batch file\(s\) to the chosen folder\./i),
+    ).toBeInTheDocument();
+  });
+
+  it("supports inline multi-editing in the batch power table", async () => {
+    openManyVcfMock.mockResolvedValue(["/tmp/a.vcf", "/tmp/b.vcf"]);
+    readVcfFileMock.mockImplementation(async (path: string) =>
+      path.endsWith("a.vcf")
+        ? createVcf([
+            "BEGIN:VCARD",
+            "VERSION:4.0",
+            "FN:Alice Example",
+            "UID:urn:uuid:alice",
+            "REV:2026-03-20T08:00:00Z",
+            "PRODID:-//vCard Editor//EN",
+            "END:VCARD",
+          ])
+        : createVcf([
+            "BEGIN:VCARD",
+            "VERSION:4.0",
+            "FN:Bob Example",
+            "UID:urn:uuid:bob",
+            "REV:2026-03-20T08:00:00Z",
+            "PRODID:-//vCard Editor//EN",
+            "END:VCARD",
+          ]),
+    );
+    writeVcfFileMock.mockResolvedValue(undefined);
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^batch$/i }));
+    expect(await screen.findByTestId("batch-workspace")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /add files/i }));
+    expect(await screen.findByText("Alice Example")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: /power user table/i }));
+
+    fireEvent.change(screen.getByLabelText(/formatted name for a\.vcf/i), {
+      target: { value: "Alice Table" },
+    });
+    fireEvent.change(screen.getByLabelText(/email for a\.vcf/i), {
+      target: { value: "alice@table.test" },
+    });
+
+    const bobRoleInput = screen.getByLabelText(/role for b\.vcf/i);
+    fireEvent.focus(bobRoleInput);
+    fireEvent.change(bobRoleInput, {
+      target: { value: "Operations" },
+    });
+    fireEvent.change(screen.getByLabelText(/phone for b\.vcf/i), {
+      target: { value: "+49 151 1234567" },
+    });
+    fireEvent.change(screen.getByLabelText(/website for b\.vcf/i), {
+      target: { value: "https://bob.example.com" },
+    });
+
+    expect(screen.getByText(/2 visible \/ 2 selected/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /preview apply/i }));
+    expect(await screen.findByText(/preview prepared for 2 file\(s\)\./i)).toBeInTheDocument();
+    expect(screen.getByText(/will update a\.vcf in place\./i)).toBeInTheDocument();
+    expect(screen.getByText(/will update b\.vcf in place\./i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /apply changes/i }));
+
+    await waitFor(() => {
+      expect(writeVcfFileMock).toHaveBeenCalledTimes(4);
+    });
+
+    const targetWrites = writeVcfFileMock.mock.calls.filter(
+      ([path]) => String(path).endsWith(".vcf") && !String(path).includes(".bak.vcf"),
+    );
+
+    expect(targetWrites).toHaveLength(2);
+    expect(targetWrites[0]?.[1]).toContain("FN:Alice Table");
+    expect(targetWrites[0]?.[1]).toContain("EMAIL:alice@table.test");
+    expect(targetWrites[1]?.[1]).toContain("ROLE:Operations");
+    expect(targetWrites[1]?.[1]).toContain("TEL:+49 151 1234567");
+    expect(targetWrites[1]?.[1]).toContain("URL:https://bob.example.com");
   });
 
   it("previews and applies an in-place batch patch with backups", async () => {
