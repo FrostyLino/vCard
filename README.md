@@ -1,24 +1,25 @@
 # vCard Editor
 
-`vCard Editor` is a desktop app for macOS and Ubuntu for opening, editing, validating and safely saving `.vcf` files. It is built with `Tauri + React + TypeScript` and focuses on a clean UI, conservative roundtrips and practical day-to-day contact editing in both single-contact and batch workflows.
+`vCard Editor` is a desktop app for macOS, Ubuntu and Windows for opening, editing, validating and safely saving `.vcf` files. It is built with `Tauri + React + TypeScript` and focuses on a clean UI, conservative roundtrips and practical day-to-day contact editing in both single-contact and batch workflows.
 
 ## Release status
 
 - Current version: `1.1.0`
 - License: `MIT`
-- Supported platforms in this branch: macOS and Ubuntu 22.04
-- Release workflow artifacts: `.app`, `.dmg` and `.AppImage`
+- Supported platforms in this branch: macOS, Ubuntu 22.04 and Windows 10/11 x64
+- Release workflow artifacts: `.app`, `.dmg`, `.AppImage` and Windows NSIS `.exe`
 - Latest release location: GitHub Releases for this repository
 
-The app is feature-complete for production use on macOS and Ubuntu 22.04 and ships with automated verification plus manual smoke checklists for the real Tauri runtime. Current macOS builds are still unsigned and not notarized, so public distribution without Gatekeeper warnings requires signing and notarization to be added separately.
+The app is feature-complete for production use on macOS, Ubuntu 22.04 and Windows 10/11 x64 and ships with automated verification plus manual smoke checklists for the real Tauri runtime. Current macOS builds are still unsigned and not notarized, and first-pass Windows installers are unsigned and may trigger SmartScreen warnings.
 
 ## Production readiness
 
 - Automated gate: `npm run verify`
 - Manual release gate: [`docs/batch-release-checklist.md`](docs/batch-release-checklist.md)
 - Manual Linux gate: [`docs/linux-release-checklist.md`](docs/linux-release-checklist.md)
+- Manual Windows gate: [`docs/windows-release-checklist.md`](docs/windows-release-checklist.md)
 - Native release workflow: tag push via `.github/workflows/release.yml`
-- Supported release platforms: macOS and Ubuntu 22.04
+- Supported release platforms: macOS, Ubuntu 22.04 and Windows 10/11 x64
 - Safety model:
   - save validation blocks broken single-file writes
   - batch preview is mandatory before apply
@@ -93,6 +94,10 @@ Requirements:
   - Ubuntu 22.04:
     - `sudo apt-get update`
     - `sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev libgtk-3-dev libappindicator3-dev librsvg2-dev patchelf libfuse2`
+  - Windows 10/11 x64:
+    - Microsoft Visual Studio C++ Build Tools
+    - MSVC toolchain support through the standard Rust Windows toolchain
+    - WebView2 runtime if you are running the app outside the installer flow
 
 Install and run:
 
@@ -121,6 +126,12 @@ Run the Ubuntu 22.04 Linux smoke checklist before merging Linux support or cutti
 cat docs/linux-release-checklist.md
 ```
 
+Run the Windows smoke checklist before merging Windows support or cutting a release that includes the NSIS installer:
+
+```bash
+cat docs/windows-release-checklist.md
+```
+
 Build a local release bundle:
 
 ```bash
@@ -128,13 +139,14 @@ npm run tauri build
 ```
 
 On Ubuntu 22.04, AppImage bundles are produced by the same command. The resulting file may need `chmod +x` before launch outside the build environment.
+On Windows, the same command produces the NSIS installer. The first-pass installer uses the WebView2 download bootstrapper, so machines without WebView2 need internet access during installation.
 
 ## Release process
 
 This repository includes:
 
-- `.github/workflows/ci.yml` for macOS and Ubuntu 22.04 verification on pushes and pull requests
-- `.github/workflows/release.yml` for tag-driven macOS bundles and Ubuntu 22.04 AppImage builds
+- `.github/workflows/ci.yml` for macOS, Ubuntu 22.04 and Windows verification on pushes and pull requests
+- `.github/workflows/release.yml` for tag-driven macOS bundles, Ubuntu 22.04 AppImage builds and Windows NSIS installers
 
 To cut a release:
 
@@ -145,12 +157,13 @@ git tag v1.1.0
 git push origin v1.1.0
 ```
 
-That tag triggers the release workflow, which builds macOS bundles plus the Ubuntu 22.04 AppImage and creates or updates the GitHub release automatically.
+That tag triggers the release workflow, which builds macOS bundles, the Ubuntu 22.04 AppImage, and the Windows x64 NSIS installer and creates or updates the GitHub release automatically.
 
 ## Scope limits
 
 - The app intentionally supports only one `BEGIN:VCARD ... END:VCARD` block per file.
 - Batch folder import is intentionally non-recursive in the current implementation.
 - Official Linux support is currently limited to Ubuntu 22.04 with AppImage as the release artifact.
-- Windows is not part of the supported release target right now.
+- Official Windows support is currently limited to Windows 10/11 x64 with NSIS as the installer format.
+- Windows installers are currently unsigned; SmartScreen warnings are expected until signing is added later.
 - Rare standard fields without dedicated UI are preserved as raw properties instead of being edited directly.

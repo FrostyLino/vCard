@@ -8,6 +8,10 @@ All notable changes to this project will be documented in this file.
 - Added Ubuntu 22.04 AppImage packaging to the tag-driven GitHub release workflow.
 - Added Linux production documentation and a dedicated Ubuntu 22.04 smoke checklist.
 - Updated product metadata and support documentation from macOS-only wording to macOS plus Ubuntu 22.04.
+- Added Windows CI verification alongside macOS and Ubuntu.
+- Added Windows 10/11 x64 NSIS packaging to the tag-driven GitHub release workflow.
+- Added Windows production documentation and a dedicated Windows smoke checklist.
+- Added first-pass Windows installer configuration with WebView2 download bootstrapper support.
 
 ## 1.1.0 - 2026-03-23
 
