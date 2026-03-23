@@ -112,9 +112,28 @@ function App() {
     () => batch.items.filter((item) => matchesBatchSearch(item, batch.search)),
     [batch.items, batch.search],
   );
+  const batchItemsById = useMemo(
+    () => new Map(batch.items.map((item) => [item.id, item])),
+    [batch.items],
+  );
+  const selectedIdSet = useMemo(() => new Set(batch.selectedIds), [batch.selectedIds]);
+  const visibleValidBatchItems = useMemo(
+    () => visibleBatchItems.filter((item) => Boolean(item.document)),
+    [visibleBatchItems],
+  );
+  const visibleValidBatchIds = useMemo(
+    () => visibleValidBatchItems.map((item) => item.id),
+    [visibleValidBatchItems],
+  );
   const batchCreator = batch.creator ?? createEmptyBatchCreatorState();
   const batchViewMode = batch.viewMode ?? "overview";
-  const selectedBatchItems = batch.items.filter((item) => batch.selectedIds.includes(item.id));
+  const selectedBatchItems = useMemo(
+    () =>
+      batch.selectedIds
+        .map((itemId) => batchItemsById.get(itemId))
+        .filter((item): item is BatchItem => Boolean(item)),
+    [batch.selectedIds, batchItemsById],
+  );
   const selectedValidBatchItems = selectedBatchItems.filter((item) => item.document);
   const selectedInvalidBatchItems = selectedBatchItems.filter((item) => !item.document);
   const batchHasDirtyItems = batch.items.some(isBatchItemDirty);
@@ -452,7 +471,7 @@ function App() {
           continue;
         }
 
-        const sourceItem = batch.items.find((item) => item.id === entry.itemId);
+        const sourceItem = batchItemsById.get(entry.itemId);
 
         if (!sourceItem) {
           continue;
@@ -500,10 +519,12 @@ function App() {
         }
       }
 
+      const previewEntriesById = new Map(preview.entries.map((entry) => [entry.itemId, entry]));
+
       setBatch((current) => ({
         ...current,
         items: current.items.map((item) => {
-          const previewEntry = preview.entries.find((entry) => entry.itemId === item.id);
+          const previewEntry = previewEntriesById.get(item.id);
           const writeResult = itemResults.get(item.id);
 
           if (writeResult) {
@@ -1198,26 +1219,21 @@ function App() {
                       <input
                         type="checkbox"
                         checked={
-                          visibleBatchItems.filter((item) => item.document).length > 0 &&
-                          visibleBatchItems
-                            .filter((item) => item.document)
-                            .every((item) => batch.selectedIds.includes(item.id))
+                          visibleValidBatchIds.length > 0 &&
+                          visibleValidBatchIds.every((itemId) => selectedIdSet.has(itemId))
                         }
                         onChange={() => {
-                          const visibleValidIds = visibleBatchItems
-                            .filter((item) => item.document)
-                            .map((item) => item.id);
-
                           updateBatch((current) => {
-                            const everySelected = visibleValidIds.every((id) =>
-                              current.selectedIds.includes(id),
+                            const currentSelectedIdSet = new Set(current.selectedIds);
+                            const everySelected = visibleValidBatchIds.every((itemId) =>
+                              currentSelectedIdSet.has(itemId),
                             );
 
                             return {
                               ...current,
                               selectedIds: everySelected
-                                ? current.selectedIds.filter((id) => !visibleValidIds.includes(id))
-                                : Array.from(new Set([...current.selectedIds, ...visibleValidIds])),
+                                ? current.selectedIds.filter((id) => !visibleValidBatchIds.includes(id))
+                                : Array.from(new Set([...current.selectedIds, ...visibleValidBatchIds])),
                             };
                           });
                         }}
@@ -1233,7 +1249,7 @@ function App() {
                     <div className="batch-table-scroll">
                       <BatchPowerTable
                         items={visibleBatchItems}
-                        selectedIds={batch.selectedIds}
+                        selectedIdSet={selectedIdSet}
                         onSelectRow={selectOnlyBatchItem}
                         onToggleSelection={setBatchItemSelection}
                         onEnsureSelection={ensureBatchItemSelected}
@@ -1276,7 +1292,7 @@ function App() {
                           {visibleBatchItems.map((item) => {
                             const document = item.document;
                             const itemIssues = getBatchItemValidationIssues(item);
-                            const isSelected = batch.selectedIds.includes(item.id);
+                            const isSelected = selectedIdSet.has(item.id);
 
                             return (
                               <tr
@@ -2075,7 +2091,7 @@ interface BatchCreatorPanelProps {
 
 interface BatchPowerTableProps {
   items: BatchItem[];
-  selectedIds: string[];
+  selectedIdSet: ReadonlySet<string>;
   onSelectRow: (itemId: string) => void;
   onToggleSelection: (itemId: string, checked: boolean) => void;
   onEnsureSelection: (itemId: string) => void;
@@ -2166,7 +2182,7 @@ interface BatchPowerTableRowProps {
 
 function BatchPowerTable({
   items,
-  selectedIds,
+  selectedIdSet,
   onSelectRow,
   onToggleSelection,
   onEnsureSelection,
@@ -2195,7 +2211,7 @@ function BatchPowerTable({
           <BatchPowerTableRow
             key={item.id}
             item={item}
-            isSelected={selectedIds.includes(item.id)}
+            isSelected={selectedIdSet.has(item.id)}
             onSelectRow={onSelectRow}
             onToggleSelection={onToggleSelection}
             onEnsureSelection={onEnsureSelection}
