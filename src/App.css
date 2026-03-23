@@ -191,13 +191,12 @@ textarea::placeholder {
 .date-picker__footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 0.65rem;
 }
 
 .date-picker__controls {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 6.6rem;
+  grid-template-columns: minmax(12.5rem, 1fr) 6.9rem;
   gap: 0.55rem;
   flex: 1 1 auto;
 }
@@ -208,7 +207,6 @@ textarea::placeholder {
   border-radius: 12px;
 }
 
-.date-picker__nav,
 .date-picker__footer-button {
   padding: 0.7rem 0.82rem;
   border: 1px solid var(--border);
@@ -277,6 +275,7 @@ textarea::placeholder {
 
 .date-picker__footer {
   margin-top: 0.85rem;
+  justify-content: space-between;
 }
 
 input:hover,

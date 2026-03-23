@@ -90,12 +90,6 @@ export function DateInputField({
     setIsOpen(true);
   }
 
-  function moveMonth(direction: -1 | 1) {
-    const moved = addMonth(viewYear, viewMonth, direction);
-    setViewYear(moved.year);
-    setViewMonth(moved.month);
-  }
-
   function applyDay(day: number) {
     onChange(formatIsoDate(viewYear, viewMonth, day));
     setIsOpen(false);
@@ -151,14 +145,6 @@ export function DateInputField({
           aria-label={`${pickerLabel} dialog`}
         >
           <div className="date-picker__toolbar">
-            <button
-              type="button"
-              className="date-picker__nav"
-              onClick={() => moveMonth(-1)}
-              aria-label="Previous month"
-            >
-              Prev
-            </button>
             <div className="date-picker__controls">
               <label className="visually-hidden" htmlFor={`${id ?? "date"}-month`}>
                 Month
@@ -195,14 +181,6 @@ export function DateInputField({
                 }}
               />
             </div>
-            <button
-              type="button"
-              className="date-picker__nav"
-              onClick={() => moveMonth(1)}
-              aria-label="Next month"
-            >
-              Next
-            </button>
           </div>
 
           <div className="date-picker__weekdays" aria-hidden="true">
@@ -327,15 +305,6 @@ function getDaysInMonth(year: number, month: number): number {
 
 function formatIsoDate(year: number, month: number, day: number): string {
   return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-}
-
-function addMonth(year: number, month: number, direction: -1 | 1): { year: number; month: number } {
-  const date = new Date(Date.UTC(year, month - 1 + direction, 1));
-
-  return {
-    year: date.getUTCFullYear(),
-    month: date.getUTCMonth() + 1,
-  };
 }
 
 function getTodayParts() {
