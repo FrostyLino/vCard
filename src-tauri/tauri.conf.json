@@ -28,14 +28,15 @@
     "active": true,
     "targets": [
       "app",
-      "dmg"
+      "dmg",
+      "appimage"
     ],
     "copyright": "Copyright (c) 2026 Lino Seydel",
     "license": "MIT",
     "licenseFile": "../LICENSE",
     "category": "Productivity",
-    "shortDescription": "Safe single-contact and batch editing for .vcf files",
-    "longDescription": "vCard Editor is a macOS-first desktop app for opening, validating, editing and safely saving .vcf files in both single-contact and batch workflows. It supports draft creation, batch patching, inline power-table editing, photos, business-card metadata, instant-messaging URIs, live raw preview and conservative roundtrips for unknown properties.",
+    "shortDescription": "Safe single-contact and batch editing for .vcf files on macOS and Ubuntu",
+    "longDescription": "vCard Editor is a desktop app for macOS and Ubuntu that opens, validates, edits and safely saves .vcf files in both single-contact and batch workflows. It supports draft creation, batch patching, inline power-table editing, photos, business-card metadata, instant-messaging URIs, live raw preview and conservative roundtrips for unknown properties.",
     "fileAssociations": [
       {
         "ext": [
