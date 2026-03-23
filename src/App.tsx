@@ -1250,34 +1250,32 @@ function App() {
                   </div>
 
                   {batchViewMode === "power-table" ? (
-                    <div className="batch-table-scroll">
-                      <BatchPowerTable
-                        rows={visibleBatchTableRows}
-                        selectedIdSet={selectedIdSet}
-                        onSelectRow={selectOnlyBatchItem}
-                        onToggleSelection={setBatchItemSelection}
-                        onEnsureSelection={ensureBatchItemSelected}
-                        onUpdateFormattedName={(itemId, value) =>
-                          updateBatchItemTextField(itemId, "formattedName", value)
-                        }
-                        onUpdateOrganization={updateBatchItemOrganization}
-                        onUpdateEmail={(itemId, value) =>
-                          updateBatchItemPrimaryContactValue(itemId, "emails", value)
-                        }
-                        onUpdatePhone={(itemId, value) =>
-                          updateBatchItemPrimaryContactValue(itemId, "phones", value)
-                        }
-                        onUpdateUrl={(itemId, value) =>
-                          updateBatchItemPrimaryContactValue(itemId, "urls", value)
-                        }
-                        onUpdateTitle={(itemId, value) =>
-                          updateBatchItemTextField(itemId, "title", value)
-                        }
-                        onUpdateRole={(itemId, value) =>
-                          updateBatchItemTextField(itemId, "role", value)
-                        }
-                      />
-                    </div>
+                    <BatchPowerTable
+                      rows={visibleBatchTableRows}
+                      selectedIdSet={selectedIdSet}
+                      onSelectRow={selectOnlyBatchItem}
+                      onToggleSelection={setBatchItemSelection}
+                      onEnsureSelection={ensureBatchItemSelected}
+                      onUpdateFormattedName={(itemId, value) =>
+                        updateBatchItemTextField(itemId, "formattedName", value)
+                      }
+                      onUpdateOrganization={updateBatchItemOrganization}
+                      onUpdateEmail={(itemId, value) =>
+                        updateBatchItemPrimaryContactValue(itemId, "emails", value)
+                      }
+                      onUpdatePhone={(itemId, value) =>
+                        updateBatchItemPrimaryContactValue(itemId, "phones", value)
+                      }
+                      onUpdateUrl={(itemId, value) =>
+                        updateBatchItemPrimaryContactValue(itemId, "urls", value)
+                      }
+                      onUpdateTitle={(itemId, value) =>
+                        updateBatchItemTextField(itemId, "title", value)
+                      }
+                      onUpdateRole={(itemId, value) =>
+                        updateBatchItemTextField(itemId, "role", value)
+                      }
+                    />
                   ) : (
                     <div className="batch-table-scroll">
                       <table className="batch-table">
@@ -2174,6 +2172,11 @@ const BATCH_POWER_TABLE_FIELD_COLUMNS: BatchPowerTableFieldColumn[] = [
   },
 ];
 
+const BATCH_POWER_TABLE_ROW_HEIGHT = 74;
+const BATCH_POWER_TABLE_VIEWPORT_HEIGHT = 560;
+const BATCH_POWER_TABLE_OVERSCAN = 6;
+const BATCH_POWER_TABLE_VIRTUALIZATION_THRESHOLD = 24;
+
 interface BatchPowerTableRowProps {
   row: BatchTableRowData;
   isSelected: boolean;
@@ -2203,38 +2206,73 @@ function BatchPowerTable({
   onUpdateTitle,
   onUpdateRole,
 }: BatchPowerTableProps) {
+  const [scrollTop, setScrollTop] = useState(0);
+  const isVirtualized = rows.length > BATCH_POWER_TABLE_VIRTUALIZATION_THRESHOLD;
+  const visibleRowCount = Math.ceil(BATCH_POWER_TABLE_VIEWPORT_HEIGHT / BATCH_POWER_TABLE_ROW_HEIGHT);
+  const startIndex = isVirtualized
+    ? Math.max(0, Math.floor(scrollTop / BATCH_POWER_TABLE_ROW_HEIGHT) - BATCH_POWER_TABLE_OVERSCAN)
+    : 0;
+  const endIndex = isVirtualized
+    ? Math.min(
+        rows.length,
+        startIndex + visibleRowCount + BATCH_POWER_TABLE_OVERSCAN * 2,
+      )
+    : rows.length;
+  const visibleRows = rows.slice(startIndex, endIndex);
+  const topSpacerHeight = isVirtualized ? startIndex * BATCH_POWER_TABLE_ROW_HEIGHT : 0;
+  const bottomSpacerHeight = isVirtualized
+    ? Math.max(0, (rows.length - endIndex) * BATCH_POWER_TABLE_ROW_HEIGHT)
+    : 0;
+  const columnCount = BATCH_POWER_TABLE_FIELD_COLUMNS.length + 3;
+
   return (
-    <table className="batch-table batch-table--power">
-      <thead>
-        <tr>
-          <th>Select</th>
-          <th>File</th>
-          {BATCH_POWER_TABLE_FIELD_COLUMNS.map((column) => (
-            <th key={column.key}>{column.label}</th>
+    <div
+      className={`batch-table-scroll batch-table-scroll--power${isVirtualized ? " batch-table-scroll--virtualized" : ""}`}
+      data-testid="batch-power-table-scroll"
+      onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+    >
+      <table className="batch-table batch-table--power">
+        <thead>
+          <tr>
+            <th>Select</th>
+            <th>File</th>
+            {BATCH_POWER_TABLE_FIELD_COLUMNS.map((column) => (
+              <th key={column.key}>{column.label}</th>
+            ))}
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {topSpacerHeight > 0 ? (
+            <tr aria-hidden="true" className="batch-table__spacer">
+              <td colSpan={columnCount} style={{ height: `${topSpacerHeight}px` }} />
+            </tr>
+          ) : null}
+          {visibleRows.map((row) => (
+            <BatchPowerTableRow
+              key={row.item.id}
+              row={row}
+              isSelected={selectedIdSet.has(row.item.id)}
+              onSelectRow={onSelectRow}
+              onToggleSelection={onToggleSelection}
+              onEnsureSelection={onEnsureSelection}
+              onUpdateFormattedName={onUpdateFormattedName}
+              onUpdateOrganization={onUpdateOrganization}
+              onUpdateEmail={onUpdateEmail}
+              onUpdatePhone={onUpdatePhone}
+              onUpdateUrl={onUpdateUrl}
+              onUpdateTitle={onUpdateTitle}
+              onUpdateRole={onUpdateRole}
+            />
           ))}
-          <th>Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row) => (
-          <BatchPowerTableRow
-            key={row.item.id}
-            row={row}
-            isSelected={selectedIdSet.has(row.item.id)}
-            onSelectRow={onSelectRow}
-            onToggleSelection={onToggleSelection}
-            onEnsureSelection={onEnsureSelection}
-            onUpdateFormattedName={onUpdateFormattedName}
-            onUpdateOrganization={onUpdateOrganization}
-            onUpdateEmail={onUpdateEmail}
-            onUpdatePhone={onUpdatePhone}
-            onUpdateUrl={onUpdateUrl}
-            onUpdateTitle={onUpdateTitle}
-            onUpdateRole={onUpdateRole}
-          />
-        ))}
-      </tbody>
-    </table>
+          {bottomSpacerHeight > 0 ? (
+            <tr aria-hidden="true" className="batch-table__spacer">
+              <td colSpan={columnCount} style={{ height: `${bottomSpacerHeight}px` }} />
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

@@ -704,6 +704,14 @@ textarea {
   border-radius: 20px;
 }
 
+.batch-table-scroll--power {
+  overflow-y: auto;
+}
+
+.batch-table-scroll--virtualized {
+  max-height: 35rem;
+}
+
 .batch-table-actions {
   display: flex;
   align-items: center;
@@ -743,6 +751,12 @@ textarea {
 .batch-table--power {
   min-width: 98rem;
   table-layout: auto;
+}
+
+.batch-table--power th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 .batch-table th,
@@ -785,6 +799,12 @@ textarea {
 
 .batch-table__row input[type="checkbox"] {
   width: auto;
+}
+
+.batch-table__spacer td {
+  padding: 0;
+  border-bottom: 0;
+  background: transparent;
 }
 
 .table-input {

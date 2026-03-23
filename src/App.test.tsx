@@ -713,6 +713,45 @@ describe("App", () => {
     expect(targetWrite).toContain("EMAIL:bob@new.test");
   });
 
+  it("virtualizes large power table batches and reveals later rows on scroll", async () => {
+    const paths = Array.from({ length: 40 }, (_, index) => `/tmp/person-${index + 1}.vcf`);
+
+    openManyVcfMock.mockResolvedValue(paths);
+    readVcfFileMock.mockImplementation(async (path: string) => {
+      const match = path.match(/person-(\d+)\.vcf$/);
+      const index = Number(match?.[1] ?? "0");
+
+      return createVcf([
+        "BEGIN:VCARD",
+        "VERSION:4.0",
+        `FN:Person ${index}`,
+        "END:VCARD",
+      ]);
+    });
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^batch$/i }));
+    expect(await screen.findByTestId("batch-workspace")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /add files/i }));
+    expect(await screen.findByText("Person 1")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: /power user table/i }));
+
+    expect(screen.getByLabelText(/formatted name for person-1\.vcf/i)).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText(/formatted name for person-40\.vcf/i),
+    ).not.toBeInTheDocument();
+
+    fireEvent.scroll(screen.getByTestId("batch-power-table-scroll"), {
+      target: { scrollTop: 74 * 34 },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/formatted name for person-40\.vcf/i)).toBeInTheDocument();
+    });
+  });
+
   it("supports inline multi-editing in the batch power table", async () => {
     openManyVcfMock.mockResolvedValue(["/tmp/a.vcf", "/tmp/b.vcf"]);
     readVcfFileMock.mockImplementation(async (path: string) =>
