@@ -118,7 +118,7 @@ describe("App", () => {
     expect(screen.getByText(/^rev$/i)).toBeInTheDocument();
   });
 
-  it("shows practical date picker controls and can clear a selected birthday", async () => {
+  it("shows a practical date picker with direct year selection and clear support", async () => {
     render(<App />);
 
     fireEvent.click(screen.getByRole("button", { name: /start blank/i }));
@@ -130,15 +130,28 @@ describe("App", () => {
       name: /clear birthday/i,
     });
 
-    expect(birthdayInput).toHaveAttribute("type", "date");
+    expect(birthdayInput).toHaveAttribute("type", "text");
     expect(openBirthdayPickerButton).toBeInTheDocument();
     expect(clearBirthdayButton).toBeDisabled();
 
-    fireEvent.change(birthdayInput, {
-      target: { value: "1988-04-12" },
+    fireEvent.click(openBirthdayPickerButton);
+
+    const pickerDialog = screen.getByRole("dialog", {
+      name: /open birthday picker dialog/i,
     });
+    const monthSelect = within(pickerDialog).getByLabelText(/^month$/i);
+    const yearInput = within(pickerDialog).getByLabelText(/^year$/i);
+
+    fireEvent.change(monthSelect, {
+      target: { value: "4" },
+    });
+    fireEvent.change(yearInput, {
+      target: { value: "1988" },
+    });
+    fireEvent.click(within(pickerDialog).getByRole("button", { name: "12" }));
 
     expect(clearBirthdayButton).toBeEnabled();
+    expect(birthdayInput).toHaveValue("1988-04-12");
     expect(screen.getByText(/BDAY:1988-04-12/i)).toBeInTheDocument();
 
     fireEvent.click(clearBirthdayButton);
