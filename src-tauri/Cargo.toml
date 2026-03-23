@@ -1,7 +1,7 @@
 [package]
 name = "vcard-editor"
 version = "1.1.0"
-description = "A macOS-first vCard editor with safe single-contact and batch workflows"
+description = "A vCard editor for macOS and Ubuntu with safe single-contact and batch workflows"
 authors = ["Lino Seydel <lino.seydel@hm.edu>"]
 license = "MIT"
 repository = "https://github.com/FrostyLino/vCard"

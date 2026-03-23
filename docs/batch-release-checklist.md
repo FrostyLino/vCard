@@ -1,6 +1,6 @@
 # Batch Release Checklist
 
-Use this checklist before merging the Batch feature branch into `main`.
+Use this checklist before shipping batch workflow changes or pushing a public release.
 
 ## Automated Gate
 

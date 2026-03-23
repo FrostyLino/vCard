@@ -1,23 +1,24 @@
 # vCard Editor
 
-`vCard Editor` is a macOS-first desktop app for opening, editing, validating and safely saving `.vcf` files. It is built with `Tauri + React + TypeScript` and focuses on a clean UI, conservative roundtrips and practical day-to-day contact editing in both single-contact and batch workflows.
+`vCard Editor` is a desktop app for macOS and Ubuntu for opening, editing, validating and safely saving `.vcf` files. It is built with `Tauri + React + TypeScript` and focuses on a clean UI, conservative roundtrips and practical day-to-day contact editing in both single-contact and batch workflows.
 
 ## Release status
 
 - Current version: `1.1.0`
 - License: `MIT`
-- Primary target: macOS
-- Release artifacts: `.app` and `.dmg`
+- Supported platforms in this branch: macOS and Ubuntu
+- Release workflow artifacts: `.app`, `.dmg` and `.AppImage`
 - Latest release location: GitHub Releases for this repository
 
-The app is feature-complete for production use on macOS and ships with automated verification plus a manual release checklist for the real Tauri runtime. Current release builds are still unsigned and not notarized, so public distribution without Gatekeeper warnings requires signing and notarization to be added separately.
+The app is feature-complete for production use on macOS and Ubuntu and ships with automated verification plus manual smoke checklists for the real Tauri runtime. Current macOS builds are still unsigned and not notarized, so public distribution without Gatekeeper warnings requires signing and notarization to be added separately.
 
 ## Production readiness
 
 - Automated gate: `npm run verify`
 - Manual release gate: [`docs/batch-release-checklist.md`](docs/batch-release-checklist.md)
+- Manual Linux gate: [`docs/linux-release-checklist.md`](docs/linux-release-checklist.md)
 - Native release workflow: tag push via `.github/workflows/release.yml`
-- Supported release platform: macOS
+- Supported release platforms: macOS and Ubuntu
 - Safety model:
   - save validation blocks broken single-file writes
   - batch preview is mandatory before apply
@@ -87,7 +88,11 @@ Requirements:
 
 - Node.js and npm
 - Rust toolchain via `rustup`
-- Apple Command Line Tools on macOS
+- Platform prerequisites:
+  - macOS: Apple Command Line Tools
+  - Ubuntu:
+    - `sudo apt-get update`
+    - `sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf`
 
 Install and run:
 
@@ -104,10 +109,16 @@ Run the full local verification suite:
 npm run verify
 ```
 
-Run the manual release smoke checklist before merging the Batch feature to `main` or pushing a public release:
+Run the manual batch smoke checklist before shipping batch workflow changes or pushing a public release:
 
 ```bash
-open docs/batch-release-checklist.md
+cat docs/batch-release-checklist.md
+```
+
+Run the Ubuntu Linux smoke checklist before merging Linux support or cutting a release that includes AppImage artifacts:
+
+```bash
+cat docs/linux-release-checklist.md
 ```
 
 Build a local release bundle:
@@ -116,12 +127,14 @@ Build a local release bundle:
 npm run tauri build
 ```
 
+On Ubuntu, AppImage bundles are produced by the same command. The resulting file may need `chmod +x` before launch outside the build environment.
+
 ## Release process
 
 This repository includes:
 
-- `.github/workflows/ci.yml` for verification on pushes and pull requests
-- `.github/workflows/release.yml` for tag-driven macOS release builds
+- `.github/workflows/ci.yml` for macOS and Ubuntu verification on pushes and pull requests
+- `.github/workflows/release.yml` for tag-driven macOS bundles and Ubuntu AppImage builds
 
 To cut a release:
 
@@ -132,11 +145,12 @@ git tag v1.1.0
 git push origin v1.1.0
 ```
 
-That tag triggers the release workflow, which builds macOS bundles and creates the GitHub release automatically.
+That tag triggers the release workflow, which builds macOS bundles plus the Ubuntu AppImage and creates or updates the GitHub release automatically.
 
 ## Scope limits
 
 - The app intentionally supports only one `BEGIN:VCARD ... END:VCARD` block per file.
 - Batch folder import is intentionally non-recursive in the current implementation.
-- The editor is macOS-first; Linux and Windows are not part of the supported release target right now.
+- Official Linux support is currently limited to Ubuntu with AppImage as the release artifact.
+- Windows is not part of the supported release target right now.
 - Rare standard fields without dedicated UI are preserved as raw properties instead of being edited directly.
