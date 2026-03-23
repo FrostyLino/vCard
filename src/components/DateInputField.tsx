@@ -33,7 +33,8 @@ export function DateInputField({
   clearLabel,
 }: DateInputFieldProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const pickerButtonRef = useRef<HTMLButtonElement | null>(null);
+  const monthSelectRef = useRef<HTMLSelectElement | null>(null);
   const parsedValue = useMemo(() => parseIsoDate(value), [value]);
   const localizedValue = useMemo(() => formatDisplayDate(value), [value]);
   const [isOpen, setIsOpen] = useState(false);
@@ -49,6 +50,14 @@ export function DateInputField({
     setViewYear(parsedValue?.year ?? fallback.year);
     setViewMonth(parsedValue?.month ?? fallback.month);
   }, [isOpen, parsedValue]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    monthSelectRef.current?.focus();
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -90,9 +99,19 @@ export function DateInputField({
     setIsOpen(true);
   }
 
+  function closePicker(restoreFocus = false) {
+    setIsOpen(false);
+
+    if (restoreFocus) {
+      queueMicrotask(() => {
+        pickerButtonRef.current?.focus();
+      });
+    }
+  }
+
   function applyDay(day: number) {
     onChange(formatIsoDate(viewYear, viewMonth, day));
-    setIsOpen(false);
+    closePicker(true);
   }
 
   function handleManualChange(nextValue: string) {
@@ -118,9 +137,11 @@ export function DateInputField({
           <button
             type="button"
             className="date-input__button"
-            onClick={() => (isOpen ? setIsOpen(false) : openPicker())}
+            ref={pickerButtonRef}
+            onClick={() => (isOpen ? closePicker(false) : openPicker())}
             aria-label={pickerLabel}
             aria-expanded={isOpen}
+            aria-haspopup="dialog"
             disabled={disabled}
           >
             Pick
@@ -139,7 +160,6 @@ export function DateInputField({
       {localizedValue ? <span className="date-input__meta">{localizedValue}</span> : null}
       {isOpen ? (
         <div
-          ref={popoverRef}
           className="date-picker"
           role="dialog"
           aria-label={`${pickerLabel} dialog`}
@@ -151,6 +171,7 @@ export function DateInputField({
               </label>
               <select
                 id={`${id ?? "date"}-month`}
+                ref={monthSelectRef}
                 className="date-picker__select"
                 value={viewMonth}
                 onChange={(event) => setViewMonth(Number(event.currentTarget.value))}
@@ -222,7 +243,7 @@ export function DateInputField({
                 onChange(formatIsoDate(today.year, today.month, today.day));
                 setViewYear(today.year);
                 setViewMonth(today.month);
-                setIsOpen(false);
+                closePicker(true);
               }}
             >
               Today
@@ -230,7 +251,7 @@ export function DateInputField({
             <button
               type="button"
               className="date-picker__footer-button date-picker__footer-button--secondary"
-              onClick={() => setIsOpen(false)}
+              onClick={() => closePicker(true)}
             >
               Done
             </button>

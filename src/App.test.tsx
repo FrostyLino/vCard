@@ -140,15 +140,29 @@ describe("App", () => {
       name: /open birthday picker dialog/i,
     });
     const monthSelect = within(pickerDialog).getByLabelText(/^month$/i);
-    const yearInput = within(pickerDialog).getByLabelText(/^year$/i);
 
-    fireEvent.change(monthSelect, {
+    expect(monthSelect).toHaveFocus();
+
+    fireEvent.click(within(pickerDialog).getByRole("button", { name: /done/i }));
+    await waitFor(() => {
+      expect(openBirthdayPickerButton).toHaveFocus();
+    });
+
+    fireEvent.click(openBirthdayPickerButton);
+
+    const reopenedPickerDialog = screen.getByRole("dialog", {
+      name: /open birthday picker dialog/i,
+    });
+    const reopenedMonthSelect = within(reopenedPickerDialog).getByLabelText(/^month$/i);
+    const yearInput = within(reopenedPickerDialog).getByLabelText(/^year$/i);
+
+    fireEvent.change(reopenedMonthSelect, {
       target: { value: "4" },
     });
     fireEvent.change(yearInput, {
       target: { value: "1988" },
     });
-    fireEvent.click(within(pickerDialog).getByRole("button", { name: "12" }));
+    fireEvent.click(within(reopenedPickerDialog).getByRole("button", { name: "12" }));
 
     expect(clearBirthdayButton).toBeEnabled();
     expect(birthdayInput).toHaveValue("1988-04-12");
@@ -394,6 +408,180 @@ describe("App", () => {
 
     expect(await screen.findByText("Folder Person")).toBeInTheDocument();
     expect(listVcfFilesInDirectoryMock).toHaveBeenCalledWith("/tmp/contacts");
+  });
+
+  it("keeps unreadable batch imports visible while valid rows can still be previewed and applied", async () => {
+    openManyVcfMock.mockResolvedValue(["/tmp/readable.vcf", "/tmp/broken.vcf"]);
+    readVcfFileMock.mockImplementation(async (path: string) => {
+      if (path.endsWith("readable.vcf")) {
+        return createVcf([
+          "BEGIN:VCARD",
+          "VERSION:4.0",
+          "FN:Readable Person",
+          "END:VCARD",
+        ]);
+      }
+
+      throw new Error("Permission denied");
+    });
+    writeVcfFileMock.mockResolvedValue(undefined);
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^batch$/i }));
+    expect(await screen.findByTestId("batch-workspace")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /add files/i }));
+
+    expect(await screen.findByText("Readable Person")).toBeInTheDocument();
+    expect(screen.getByText("broken.vcf")).toBeInTheDocument();
+    expect(screen.getByText(/permission denied/i)).toBeInTheDocument();
+
+    const brokenRow = screen.getByText("broken.vcf").closest("tr");
+    expect(brokenRow).not.toBeNull();
+    expect(within(brokenRow as HTMLElement).getByRole("checkbox")).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText(/^role$/i), {
+      target: { value: "Primary Contact" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /preview apply/i }));
+
+    expect(await screen.findByText(/preview prepared for 1 file\(s\)\./i)).toBeInTheDocument();
+    expect(screen.getByText(/will update readable\.vcf in place\./i)).toBeInTheDocument();
+    expect(screen.queryByText(/will update broken\.vcf in place\./i)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /apply changes/i }));
+
+    await waitFor(() => {
+      expect(writeVcfFileMock).toHaveBeenCalledTimes(2);
+    });
+
+    expect(writeVcfFileMock.mock.calls.some(([path]) => String(path) === "/tmp/readable.vcf")).toBe(
+      true,
+    );
+    expect(
+      writeVcfFileMock.mock.calls.some(([path]) => String(path).includes("broken.vcf")),
+    ).toBe(false);
+    expect(screen.getByText(/permission denied/i)).toBeInTheDocument();
+  });
+
+  it("filters the batch set and bulk-selects only the visible valid files", async () => {
+    openManyVcfMock.mockResolvedValue(["/tmp/alice.vcf", "/tmp/bob.vcf", "/tmp/charlie.vcf"]);
+    readVcfFileMock.mockImplementation(async (path: string) =>
+      path.endsWith("alice.vcf")
+        ? createVcf([
+            "BEGIN:VCARD",
+            "VERSION:4.0",
+            "FN:Alice Example",
+            "ORG:Northwind",
+            "END:VCARD",
+          ])
+        : path.endsWith("bob.vcf")
+          ? createVcf([
+              "BEGIN:VCARD",
+              "VERSION:4.0",
+              "FN:Bob Example",
+              "ORG:Northwind Sales",
+              "END:VCARD",
+            ])
+          : createVcf([
+              "BEGIN:VCARD",
+              "VERSION:4.0",
+              "FN:Charlie Example",
+              "ORG:Contoso",
+              "END:VCARD",
+            ]),
+    );
+    writeVcfFileMock.mockResolvedValue(undefined);
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^batch$/i }));
+    expect(await screen.findByTestId("batch-workspace")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /add files/i }));
+    expect(await screen.findByText("Alice Example")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/^search$/i), {
+      target: { value: "northwind" },
+    });
+
+    expect(screen.getByText("Alice Example")).toBeInTheDocument();
+    expect(screen.getByText("Bob Example")).toBeInTheDocument();
+    expect(screen.queryByText("Charlie Example")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText(/select visible valid files/i));
+    expect(screen.getByText(/2 visible \/ 2 selected/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/^search$/i), {
+      target: { value: "" },
+    });
+    expect(await screen.findByText(/3 visible \/ 2 selected/i)).toBeInTheDocument();
+
+    const roleSection = screen.getByRole("heading", { name: /^role$/i }).closest("section");
+    expect(roleSection).not.toBeNull();
+    fireEvent.change(within(roleSection as HTMLElement).getByRole("combobox"), {
+      target: { value: "replace" },
+    });
+    fireEvent.change(within(roleSection as HTMLElement).getByLabelText(/^role$/i), {
+      target: { value: "Filtered" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /preview apply/i }));
+
+    expect(await screen.findByText(/preview prepared for 2 file\(s\)\./i)).toBeInTheDocument();
+    expect(screen.getByText(/will update alice\.vcf in place\./i)).toBeInTheDocument();
+    expect(screen.getByText(/will update bob\.vcf in place\./i)).toBeInTheDocument();
+    expect(screen.queryByText(/will update charlie\.vcf in place\./i)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /apply changes/i }));
+
+    await waitFor(() => {
+      expect(writeVcfFileMock).toHaveBeenCalledTimes(4);
+    });
+
+    const targetPaths = writeVcfFileMock.mock.calls
+      .map(([path]) => String(path))
+      .filter((path) => path.endsWith(".vcf") && !path.includes(".bak.vcf"));
+
+    expect(targetPaths).toEqual(expect.arrayContaining(["/tmp/alice.vcf", "/tmp/bob.vcf"]));
+    expect(targetPaths).not.toContain("/tmp/charlie.vcf");
+  });
+
+  it("validates batch creator input states and normalizes repeated draft creation", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^batch$/i }));
+    expect(await screen.findByTestId("batch-workspace")).toBeInTheDocument();
+
+    const createDraftsButton = screen.getByRole("button", { name: /create drafts/i });
+    const baseNameInput = screen.getByLabelText(/^base name$/i);
+    const countInput = screen.getByLabelText(/^number of drafts$/i);
+    const startIndexInput = screen.getByLabelText(/^start index$/i);
+
+    expect(createDraftsButton).toBeDisabled();
+
+    fireEvent.change(baseNameInput, {
+      target: { value: "Launch Guest" },
+    });
+    fireEvent.change(countInput, {
+      target: { value: "0" },
+    });
+    fireEvent.change(startIndexInput, {
+      target: { value: "0" },
+    });
+
+    expect(createDraftsButton).toBeEnabled();
+    expect(screen.getByText(/launch guest -> launch-guest\.vcf/i)).toBeInTheDocument();
+
+    fireEvent.click(createDraftsButton);
+
+    expect(await screen.findByText("launch-guest.vcf")).toBeInTheDocument();
+    expect(screen.getByLabelText(/^start index$/i)).toHaveValue(2);
+
+    fireEvent.click(screen.getByRole("button", { name: /create drafts/i }));
+
+    expect(await screen.findByText("launch-guest-2.vcf")).toBeInTheDocument();
+    expect(screen.getByLabelText(/^start index$/i)).toHaveValue(3);
   });
 
   it("creates batch draft contacts and exports them through the new creator flow", async () => {
@@ -939,5 +1127,103 @@ describe("App", () => {
     expect(targetWrites[0]?.[1]).toContain("ROLE:Team Lead");
     expect(targetWrites[1]?.[1]).toContain("ROLE:Team Lead");
     expect(screen.getByText(/applied batch changes to 2 file\(s\) in place\./i)).toBeInTheDocument();
+  });
+
+  it("uses the custom date picker in batch patch replace mode and writes the chosen birthday", async () => {
+    openManyVcfMock.mockResolvedValue(["/tmp/a.vcf", "/tmp/b.vcf"]);
+    readVcfFileMock.mockImplementation(async (path: string) =>
+      path.endsWith("a.vcf")
+        ? createVcf([
+            "BEGIN:VCARD",
+            "VERSION:4.0",
+            "FN:Alice Example",
+            "UID:urn:uuid:alice",
+            "REV:2026-03-20T08:00:00Z",
+            "PRODID:-//vCard Editor//EN",
+            "END:VCARD",
+          ])
+        : createVcf([
+            "BEGIN:VCARD",
+            "VERSION:4.0",
+            "FN:Bob Example",
+            "UID:urn:uuid:bob",
+            "REV:2026-03-20T08:00:00Z",
+            "PRODID:-//vCard Editor//EN",
+            "END:VCARD",
+          ]),
+    );
+    writeVcfFileMock.mockResolvedValue(undefined);
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^batch$/i }));
+    expect(await screen.findByTestId("batch-workspace")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /add files/i }));
+    expect(await screen.findByText("Alice Example")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText(/select visible valid files/i));
+    expect(await screen.findByRole("heading", { name: /batch patch/i })).toBeInTheDocument();
+
+    const birthdaySection = screen.getByRole("heading", { name: /^birthday$/i }).closest("section");
+    expect(birthdaySection).not.toBeNull();
+
+    fireEvent.change(within(birthdaySection as HTMLElement).getByRole("combobox"), {
+      target: { value: "replace" },
+    });
+
+    const birthdayInput = within(birthdaySection as HTMLElement).getByLabelText(/^birthday$/i);
+    const openBirthdayPickerButton = within(birthdaySection as HTMLElement).getByRole("button", {
+      name: /open birthday picker/i,
+    });
+    const clearBirthdayButton = within(birthdaySection as HTMLElement).getByRole("button", {
+      name: /clear birthday/i,
+    });
+
+    fireEvent.click(openBirthdayPickerButton);
+
+    let pickerDialog = screen.getByRole("dialog", { name: /open birthday picker dialog/i });
+    fireEvent.change(within(pickerDialog).getByLabelText(/^month$/i), {
+      target: { value: "11" },
+    });
+    fireEvent.change(within(pickerDialog).getByLabelText(/^year$/i), {
+      target: { value: "1999" },
+    });
+    fireEvent.click(within(pickerDialog).getByRole("button", { name: "5" }));
+
+    expect(birthdayInput).toHaveValue("1999-11-05");
+    expect(clearBirthdayButton).toBeEnabled();
+
+    fireEvent.click(clearBirthdayButton);
+    expect(birthdayInput).toHaveValue("");
+
+    fireEvent.click(openBirthdayPickerButton);
+
+    pickerDialog = screen.getByRole("dialog", { name: /open birthday picker dialog/i });
+    fireEvent.change(within(pickerDialog).getByLabelText(/^month$/i), {
+      target: { value: "1" },
+    });
+    fireEvent.change(within(pickerDialog).getByLabelText(/^year$/i), {
+      target: { value: "2001" },
+    });
+    fireEvent.click(within(pickerDialog).getByRole("button", { name: "9" }));
+
+    expect(birthdayInput).toHaveValue("2001-01-09");
+
+    fireEvent.click(screen.getByRole("button", { name: /preview apply/i }));
+    expect(await screen.findByText(/preview prepared for 2 file\(s\)\./i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /apply changes/i }));
+
+    await waitFor(() => {
+      expect(writeVcfFileMock).toHaveBeenCalledTimes(4);
+    });
+
+    const targetWrites = writeVcfFileMock.mock.calls.filter(
+      ([path]) => String(path).endsWith(".vcf") && !String(path).includes(".bak.vcf"),
+    );
+
+    expect(targetWrites).toHaveLength(2);
+    expect(targetWrites[0]?.[1]).toContain("BDAY:2001-01-09");
+    expect(targetWrites[1]?.[1]).toContain("BDAY:2001-01-09");
   });
 });

@@ -355,7 +355,7 @@ function App() {
   }
 
   async function handleBatchCreateDrafts() {
-    const baseName = batchCreator.baseName.trim();
+    const { baseName, count, startIndex, version } = normalizeBatchCreatorState(batchCreator);
 
     if (!baseName) {
       await showError(
@@ -364,14 +364,11 @@ function App() {
       );
       return;
     }
-
-    const count = parsePositiveInteger(batchCreator.count, 1);
-    const startIndex = parsePositiveInteger(batchCreator.startIndex, 1);
     const drafts = createBatchDraftItems({
       baseName,
       count,
       startIndex,
-      version: batchCreator.version,
+      version,
     });
 
     updateBatch((current) => ({
@@ -3071,12 +3068,25 @@ function buildSuggestedPath(sourcePath: string | null, document: VCardDocument):
 }
 
 function buildBatchCreatorPreview(creator: BatchCreatorState): string {
-  const baseName = creator.baseName.trim() || "Conference Guest";
-  const count = parsePositiveInteger(creator.count, 3);
-  const startIndex = parsePositiveInteger(creator.startIndex, 1);
+  const { baseName: normalizedBaseName, count, startIndex } = normalizeBatchCreatorState(creator);
+  const baseName = normalizedBaseName || "Conference Guest";
   const shouldNumber = count > 1 || startIndex > 1;
   const suffix = shouldNumber ? ` ${startIndex}` : "";
   return `${baseName}${suffix} -> ${slugifyFileName(baseName)}${shouldNumber ? `-${startIndex}` : ""}.vcf`;
+}
+
+function normalizeBatchCreatorState(creator: BatchCreatorState): {
+  baseName: string;
+  count: number;
+  startIndex: number;
+  version: VCardVersion;
+} {
+  return {
+    baseName: creator.baseName.trim(),
+    count: parsePositiveInteger(creator.count, 1),
+    startIndex: parsePositiveInteger(creator.startIndex, 1),
+    version: creator.version,
+  };
 }
 
 function parsePositiveInteger(value: string, fallback: number): number {
