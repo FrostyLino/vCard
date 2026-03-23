@@ -59,7 +59,7 @@ export function parseVcf(source: string): ParseResult {
   }
 
   if (parsedLines.slice(beginIndex + 1, endIndex).some((line) => line.name === "BEGIN")) {
-    throw new Error("Multiple vCard entries in a single file are not supported in v1.");
+    throw new Error("Multiple vCard entries in a single file are not supported by this editor.");
   }
 
   const bodyLines = parsedLines.slice(beginIndex + 1, endIndex);

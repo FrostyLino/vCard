@@ -4,23 +4,36 @@
 
 ## Release status
 
-- Current version: `1.0.0`
+- Current version: `1.1.0`
 - License: `MIT`
 - Primary target: macOS
 - Release artifacts: `.app` and `.dmg`
 - Latest release location: GitHub Releases for this repository
 
-Current release builds are functional but unsigned and not notarized. For public macOS distribution without Gatekeeper warnings, signing and notarization secrets still need to be added later.
+The app is feature-complete for production use on macOS and ships with automated verification plus a manual release checklist for the real Tauri runtime. Current release builds are still unsigned and not notarized, so public distribution without Gatekeeper warnings requires signing and notarization to be added separately.
+
+## Production readiness
+
+- Automated gate: `npm run verify`
+- Manual release gate: [`docs/batch-release-checklist.md`](docs/batch-release-checklist.md)
+- Native release workflow: tag push via `.github/workflows/release.yml`
+- Supported release platform: macOS
+- Safety model:
+  - save validation blocks broken single-file writes
+  - batch preview is mandatory before apply
+  - in-place batch writes create timestamped backups
+  - unreadable batch items are preserved as visible errors and excluded from writes
 
 ## What it supports
 
 - Two editing modes:
   - `Single`: open and edit one vCard file with a structured inspector and live raw preview
-  - `Batch`: import many vCards, inspect one item in full or apply a structured patch to many selected files
+  - `Batch`: import many vCards, inspect one item in full, patch many selected items, or create/export new drafts
 - Open and save exactly one vCard per file
 - Read and write `vCard 3.0` and `4.0`
 - Modern structured editing UI with live raw preview
 - Contact photo import and roundtrip-safe serialization
+- Custom integrated date picker for birthdays and anniversaries
 - Business-card fields such as:
   - `FN`, `N`, `NICKNAME`
   - `ORG`, `TITLE`, `ROLE`
@@ -38,13 +51,23 @@ Current release builds are functional but unsigned and not notarized. For public
 
 - Import multiple `.vcf` files directly or load all `.vcf` files from one folder
 - Search, sort and select files from the batch table
+- Create numbered batch drafts directly inside the workspace
 - Edit one selected item with the same full inspector used in single mode
 - Select multiple valid items to open the batch patch panel
+- Use the `Power user table` for fast inline editing of:
+  - formatted name
+  - organization
+  - title
+  - role
+  - email
+  - phone
+  - website
 - Preview is required before apply, so the write plan stays explicit
 - Two write strategies are supported:
   - `In-place with backups`
   - `Output directory`
 - In-place batch writes create timestamped sibling backup files before the target file is overwritten
+- Draft items can be promoted into real file-backed batch items through export
 - Files that cannot be parsed or still contain blocking validation errors are skipped instead of being silently rewritten
 
 ## Validation and safety
@@ -81,6 +104,12 @@ Run the full local verification suite:
 npm run verify
 ```
 
+Run the manual release smoke checklist before merging the Batch feature to `main` or pushing a public release:
+
+```bash
+open docs/batch-release-checklist.md
+```
+
 Build a local release bundle:
 
 ```bash
@@ -99,8 +128,8 @@ To cut a release:
 ```bash
 git checkout main
 git pull
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
 That tag triggers the release workflow, which builds macOS bundles and creates the GitHub release automatically.
