@@ -3,7 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   chooseOutputDirectoryMock,
+  closeUnlistenMock,
+  confirmMock,
+  dragDropUnlistenMock,
+  getCurrentWindowMock,
   listVcfFilesInDirectoryMock,
+  messageMock,
+  onCloseRequestedMock,
+  onDragDropEventMock,
   openManyVcfMock,
   openVcfFolderMock,
   openVcfMock,
@@ -12,7 +19,14 @@ const {
   writeVcfFileMock,
 } = vi.hoisted(() => ({
   chooseOutputDirectoryMock: vi.fn(),
+  closeUnlistenMock: vi.fn(),
+  confirmMock: vi.fn(),
+  dragDropUnlistenMock: vi.fn(),
+  getCurrentWindowMock: vi.fn(),
   listVcfFilesInDirectoryMock: vi.fn(),
+  messageMock: vi.fn(),
+  onCloseRequestedMock: vi.fn(),
+  onDragDropEventMock: vi.fn(),
   openManyVcfMock: vi.fn(),
   openVcfFolderMock: vi.fn(),
   openVcfMock: vi.fn(),
@@ -37,22 +51,56 @@ vi.mock("./lib/file", async () => {
   };
 });
 
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: getCurrentWindowMock,
+}));
+
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  confirm: confirmMock,
+  message: messageMock,
+}));
+
 import App from "./App";
 
 function createVcf(lines: string[]): string {
   return [...lines, ""].join("\r\n");
 }
 
+function enableTauriRuntime() {
+  Object.defineProperty(window, "__TAURI_INTERNALS__", {
+    value: {},
+    configurable: true,
+  });
+}
+
 describe("App", () => {
   beforeEach(() => {
     chooseOutputDirectoryMock.mockReset();
+    closeUnlistenMock.mockReset();
+    confirmMock.mockReset();
+    dragDropUnlistenMock.mockReset();
+    getCurrentWindowMock.mockReset();
     listVcfFilesInDirectoryMock.mockReset();
+    messageMock.mockReset();
+    onCloseRequestedMock.mockReset();
+    onDragDropEventMock.mockReset();
     openManyVcfMock.mockReset();
     openVcfFolderMock.mockReset();
     openVcfMock.mockReset();
     readVcfFileMock.mockReset();
     saveVcfAsMock.mockReset();
     writeVcfFileMock.mockReset();
+
+    confirmMock.mockResolvedValue(true);
+    messageMock.mockResolvedValue(undefined);
+    onCloseRequestedMock.mockImplementation(async () => closeUnlistenMock);
+    onDragDropEventMock.mockImplementation(async () => dragDropUnlistenMock);
+    getCurrentWindowMock.mockReturnValue({
+      onCloseRequested: onCloseRequestedMock,
+      onDragDropEvent: onDragDropEventMock,
+    });
+
+    delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
   });
 
   it("renders the empty state before any file is loaded", () => {
@@ -224,6 +272,109 @@ describe("App", () => {
 
     expect(await screen.findByText(/unsupported vcard version: 5\.0/i)).toBeInTheDocument();
     expect(screen.getByTestId("empty-state")).toBeInTheDocument();
+  });
+
+  it("prevents closing when the user cancels the unsaved-changes dialog", async () => {
+    enableTauriRuntime();
+    confirmMock.mockResolvedValue(false);
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /start blank/i }));
+    fireEvent.change(await screen.findByLabelText(/^formatted name \(fn\)$/i), {
+      target: { value: "Jane Doe" },
+    });
+
+    await waitFor(() => {
+      expect(onCloseRequestedMock).toHaveBeenCalledTimes(1);
+    });
+
+    const closeHandler = onCloseRequestedMock.mock.calls[0]?.[0] as
+      | ((event: { preventDefault: () => void }) => Promise<void>)
+      | undefined;
+    const event = { preventDefault: vi.fn() };
+
+    expect(closeHandler).toBeTypeOf("function");
+
+    await closeHandler?.(event);
+
+    expect(confirmMock).toHaveBeenCalledWith(
+      "You have unsaved changes. Close the editor anyway?",
+      expect.objectContaining({
+        title: "Unsaved changes",
+        okLabel: "Close anyway",
+        cancelLabel: "Keep editing",
+      }),
+    );
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks duplicate close requests while a confirmation dialog is already open", async () => {
+    enableTauriRuntime();
+
+    let resolveConfirm: ((value: boolean) => void) | undefined;
+    confirmMock.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveConfirm = resolve;
+        }),
+    );
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /start blank/i }));
+    fireEvent.change(await screen.findByLabelText(/^formatted name \(fn\)$/i), {
+      target: { value: "Jane Doe" },
+    });
+
+    await waitFor(() => {
+      expect(onCloseRequestedMock).toHaveBeenCalledTimes(1);
+    });
+
+    const closeHandler = onCloseRequestedMock.mock.calls[0]?.[0] as
+      | ((event: { preventDefault: () => void }) => Promise<void>)
+      | undefined;
+    const firstEvent = { preventDefault: vi.fn() };
+    const secondEvent = { preventDefault: vi.fn() };
+
+    expect(closeHandler).toBeTypeOf("function");
+
+    const firstClosePromise = closeHandler?.(firstEvent);
+    await Promise.resolve();
+    await closeHandler?.(secondEvent);
+
+    expect(confirmMock).toHaveBeenCalledTimes(1);
+    expect(secondEvent.preventDefault).toHaveBeenCalledTimes(1);
+
+    resolveConfirm?.(false);
+    await firstClosePromise;
+
+    expect(firstEvent.preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it("cleans up late close-listener registration when the component unmounts first", async () => {
+    enableTauriRuntime();
+
+    let resolveCloseRegistration:
+      | ((dispose: () => void) => void)
+      | undefined;
+
+    onCloseRequestedMock.mockImplementation(
+      () =>
+        new Promise<() => void>(
+          (resolve) => {
+            resolveCloseRegistration = resolve;
+          },
+        ),
+    );
+
+    const view = render(<App />);
+
+    view.unmount();
+    resolveCloseRegistration?.(closeUnlistenMock);
+    await Promise.resolve();
+
+    expect(closeUnlistenMock).toHaveBeenCalledTimes(1);
   });
 
   it("saves a valid draft through save as and updates the visible file state", async () => {

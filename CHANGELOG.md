@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- Hardened Tauri window close handling to avoid stacked unsaved-changes dialogs and late listener leaks that could make closing feel inconsistent, especially on Windows.
+
 ## 1.2.0 - 2026-03-23
 
 - Added Ubuntu 22.04 CI verification alongside the existing macOS checks.

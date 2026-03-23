@@ -148,6 +148,7 @@ function App() {
 
   const modeRef = useRef(mode);
   const hasUnsavedWorkRef = useRef(false);
+  const closeRequestPendingRef = useRef(false);
 
   useEffect(() => {
     modeRef.current = mode;
@@ -159,6 +160,7 @@ function App() {
       return;
     }
 
+    let disposed = false;
     let unlisten: (() => void) | undefined;
 
     void getCurrentWindow()
@@ -184,13 +186,21 @@ function App() {
         }
       })
       .then((dispose) => {
+        if (disposed) {
+          dispose();
+          return;
+        }
+
         unlisten = dispose;
       })
       .catch(() => {
-        setDragActive(false);
+        if (!disposed) {
+          setDragActive(false);
+        }
       });
 
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, []);
@@ -200,6 +210,7 @@ function App() {
       return;
     }
 
+    let disposed = false;
     let unlisten: (() => void) | undefined;
 
     void getCurrentWindow()
@@ -208,28 +219,49 @@ function App() {
           return;
         }
 
-        const shouldDiscard = await confirm(
-          modeRef.current === "single"
-            ? "You have unsaved changes. Close the editor anyway?"
-            : "You have unapplied batch changes. Close the editor anyway?",
-          {
-            title: "Unsaved changes",
-            kind: "warning",
-            okLabel: "Close anyway",
-            cancelLabel: "Keep editing",
-          },
-        );
-
-        if (!shouldDiscard) {
+        // Avoid stacked close dialogs when Windows emits repeated close requests.
+        if (closeRequestPendingRef.current) {
           event.preventDefault();
+          return;
+        }
+
+        closeRequestPendingRef.current = true;
+
+        try {
+          const shouldDiscard = await confirm(
+            modeRef.current === "single"
+              ? "You have unsaved changes. Close the editor anyway?"
+              : "You have unapplied batch changes. Close the editor anyway?",
+            {
+              title: "Unsaved changes",
+              kind: "warning",
+              okLabel: "Close anyway",
+              cancelLabel: "Keep editing",
+            },
+          );
+
+          if (!shouldDiscard) {
+            event.preventDefault();
+          }
+        } catch {
+          event.preventDefault();
+        } finally {
+          closeRequestPendingRef.current = false;
         }
       })
       .then((dispose) => {
+        if (disposed) {
+          dispose();
+          return;
+        }
+
         unlisten = dispose;
       })
       .catch(() => undefined);
 
     return () => {
+      disposed = true;
+      closeRequestPendingRef.current = false;
       unlisten?.();
     };
   }, []);
