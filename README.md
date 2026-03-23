@@ -15,6 +15,7 @@ The app is feature-complete for production use on macOS, Ubuntu 22.04 and Window
 ## Production readiness
 
 - Automated gate: `npm run verify`
+- Cross-platform desktop compile gate in CI: `npm run verify:desktop`
 - Manual release gate: [`docs/batch-release-checklist.md`](docs/batch-release-checklist.md)
 - Manual Linux gate: [`docs/linux-release-checklist.md`](docs/linux-release-checklist.md)
 - Manual Windows gate: [`docs/windows-release-checklist.md`](docs/windows-release-checklist.md)
@@ -114,6 +115,12 @@ Run the full local verification suite:
 npm run verify
 ```
 
+Run the no-bundle desktop compile used by CI to validate the real Tauri app build on the current platform:
+
+```bash
+npm run verify:desktop
+```
+
 Run the manual batch smoke checklist before shipping batch workflow changes or pushing a public release:
 
 ```bash
@@ -145,7 +152,7 @@ On Windows, the same command produces the NSIS installer. The first-pass install
 
 This repository includes:
 
-- `.github/workflows/ci.yml` for macOS, Ubuntu 22.04 and Windows verification on pushes and pull requests
+- `.github/workflows/ci.yml` for macOS, Ubuntu 22.04 and Windows verification on pushes and pull requests, including a no-bundle Tauri compile on each supported OS
 - `.github/workflows/release.yml` for tag-driven macOS bundles, Ubuntu 22.04 AppImage builds and Windows NSIS installers
 
 To cut a release:

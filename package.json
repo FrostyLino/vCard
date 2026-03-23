@@ -17,6 +17,7 @@
     "test:watch": "vitest",
     "preview": "vite preview",
     "verify": "npm test && npm run build && (cd src-tauri && cargo check)",
+    "verify:desktop": "tauri build --no-bundle",
     "tauri": "tauri"
   },
   "dependencies": {

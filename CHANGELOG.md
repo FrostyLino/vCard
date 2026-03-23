@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - Added Windows 10/11 x64 NSIS packaging to the tag-driven GitHub release workflow.
 - Added Windows production documentation and a dedicated Windows smoke checklist.
 - Added first-pass Windows installer configuration with WebView2 download bootstrapper support.
+- Added a cross-platform no-bundle Tauri compile gate in CI to catch desktop build regressions before release packaging.
 
 ## 1.1.0 - 2026-03-23
 
