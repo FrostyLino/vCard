@@ -4,7 +4,7 @@
 
 ## Release status
 
-- Current version: `1.1.0`
+- Current version: `1.2.0`
 - License: `MIT`
 - Supported platforms in this branch: macOS, Ubuntu 22.04 and Windows 10/11 x64
 - Release workflow artifacts: `.app`, `.dmg`, `.AppImage` and Windows NSIS `.exe`
@@ -160,8 +160,8 @@ To cut a release:
 ```bash
 git checkout main
 git pull
-git tag v1.1.0
-git push origin v1.1.0
+git tag v1.2.0
+git push origin v1.2.0
 ```
 
 That tag triggers the release workflow, which builds macOS bundles, the Ubuntu 22.04 AppImage, and the Windows x64 NSIS installer and creates or updates the GitHub release automatically.

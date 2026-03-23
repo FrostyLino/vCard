@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## 1.2.0 - 2026-03-23
 
 - Added Ubuntu 22.04 CI verification alongside the existing macOS checks.
 - Added Ubuntu 22.04 AppImage packaging to the tag-driven GitHub release workflow.
