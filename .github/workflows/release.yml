@@ -18,14 +18,18 @@ jobs:
           - platform: macos-latest
             targets: aarch64-apple-darwin,x86_64-apple-darwin
             args: --target aarch64-apple-darwin
+            appleSigningIdentity: "-"
           - platform: macos-latest
             targets: aarch64-apple-darwin,x86_64-apple-darwin
             args: --target x86_64-apple-darwin
+            appleSigningIdentity: "-"
           - platform: ubuntu-22.04
             args: --bundles appimage
+            appleSigningIdentity: ""
           - platform: windows-latest
             targets: x86_64-pc-windows-msvc
             args: --target x86_64-pc-windows-msvc --bundles nsis
+            appleSigningIdentity: ""
 
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 45
@@ -88,10 +92,11 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: ${{ matrix.appleSigningIdentity }}
         with:
           tagName: v__VERSION__
           releaseName: vCard Editor v__VERSION__
-          releaseBody: Release v__VERSION__ of vCard Editor. Download the macOS bundles, Ubuntu AppImage, or Windows NSIS installer below. See the changelog and README for feature and workflow details. Current macOS builds and Windows installers are unsigned, so Gatekeeper or SmartScreen warnings may still appear.
+          releaseBody: Release v__VERSION__ of vCard Editor. Download the macOS bundles, Ubuntu AppImage, or Windows NSIS installer below. See the changelog, README, and install guide for workflow details. macOS builds use ad-hoc signing but are not notarized, so the first launch may require Right-click > Open or Privacy & Security > Open Anyway. Windows installers are unsigned, so SmartScreen may require More info > Run anyway.
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

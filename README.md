@@ -10,7 +10,7 @@
 - Release workflow artifacts: `.app`, `.dmg`, `.AppImage` and Windows NSIS `.exe`
 - Latest release location: GitHub Releases for this repository
 
-The app is feature-complete for production use on macOS, Ubuntu 22.04 and Windows 10/11 x64 and ships with automated verification plus manual smoke checklists for the real Tauri runtime. Current macOS builds are still unsigned and not notarized, and first-pass Windows installers are unsigned and may trigger SmartScreen warnings.
+The app is feature-complete for production use on macOS, Ubuntu 22.04 and Windows 10/11 x64 and ships with automated verification plus manual smoke checklists for the real Tauri runtime. Current macOS builds use ad-hoc signing but are not notarized, so Gatekeeper may require a manual first-launch confirmation. Windows release builds are unsigned and may trigger SmartScreen warnings before installation.
 
 ## Production readiness
 
@@ -19,6 +19,7 @@ The app is feature-complete for production use on macOS, Ubuntu 22.04 and Window
 - Manual release gate: [`docs/batch-release-checklist.md`](docs/batch-release-checklist.md)
 - Manual Linux gate: [`docs/linux-release-checklist.md`](docs/linux-release-checklist.md)
 - Manual Windows gate: [`docs/windows-release-checklist.md`](docs/windows-release-checklist.md)
+- Direct-download install guide: [`docs/direct-download-install-guide.md`](docs/direct-download-install-guide.md)
 - Native release workflow: tag push via `.github/workflows/release.yml`
 - Supported release platforms: macOS, Ubuntu 22.04 and Windows 10/11 x64
 - Safety model:
@@ -139,6 +140,12 @@ Run the Windows smoke checklist before merging Windows support or cutting a rele
 cat docs/windows-release-checklist.md
 ```
 
+Review the direct-download install guidance before publishing Windows or macOS release assets:
+
+```bash
+cat docs/direct-download-install-guide.md
+```
+
 Build a local release bundle:
 
 ```bash
@@ -146,14 +153,15 @@ npm run tauri build
 ```
 
 On Ubuntu 22.04, AppImage bundles are produced by the same command. The resulting file may need `chmod +x` before launch outside the build environment.
-On Windows, the same command produces the NSIS installer. The first-pass installer uses the WebView2 download bootstrapper, so machines without WebView2 need internet access during installation.
+On macOS, the same command produces the `.app` and `DMG` bundles. Release builds use ad-hoc signing for compatibility, but they are not notarized, so a manual `Open` confirmation can still be required on first launch.
+On Windows, the same command produces the NSIS installer. The installer is intentionally unsigned in the current zero-cost release path, so SmartScreen warnings are expected and machines without WebView2 still need internet access during installation.
 
 ## Release process
 
 This repository includes:
 
 - `.github/workflows/ci.yml` for macOS, Ubuntu 22.04 and Windows verification on pushes and pull requests, including a no-bundle Tauri compile on each supported OS
-- `.github/workflows/release.yml` for tag-driven macOS bundles, Ubuntu 22.04 AppImage builds and Windows NSIS installers
+- `.github/workflows/release.yml` for tag-driven macOS bundles, Ubuntu 22.04 AppImage builds, and Windows NSIS installers on GitHub-hosted runners using a zero-cost direct-download path
 
 To cut a release:
 
@@ -164,7 +172,7 @@ git tag v1.2.0
 git push origin v1.2.0
 ```
 
-That tag triggers the release workflow, which builds macOS bundles, the Ubuntu 22.04 AppImage, and the Windows x64 NSIS installer and creates or updates the GitHub release automatically.
+That tag triggers the release workflow, which builds macOS bundles, the Ubuntu 22.04 AppImage, and the Windows x64 NSIS installer on GitHub-hosted runners before publishing the artifacts to the GitHub release. macOS builds are ad-hoc signed but not notarized, and Windows installers remain unsigned.
 
 ## Scope limits
 
@@ -172,5 +180,6 @@ That tag triggers the release workflow, which builds macOS bundles, the Ubuntu 2
 - Batch folder import is intentionally non-recursive in the current implementation.
 - Official Linux support is currently limited to Ubuntu 22.04 with AppImage as the release artifact.
 - Official Windows support is currently limited to Windows 10/11 x64 with NSIS as the installer format.
-- Windows installers are currently unsigned; SmartScreen warnings are expected until signing is added later.
+- Windows direct-download releases are intentionally unsigned and can trigger SmartScreen warnings.
+- macOS direct-download releases use ad-hoc signing but are not notarized, so Gatekeeper can require a manual first-launch confirmation.
 - Rare standard fields without dedicated UI are preserved as raw properties instead of being edited directly.

@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 - Hardened Tauri window close handling to avoid stacked unsaved-changes dialogs and late listener leaks that could make closing feel inconsistent, especially on Windows.
+- Switched the release setup to a zero-cost direct-download path with unsigned Windows installers, ad-hoc signed macOS bundles, and user install guidance for both platforms.
 
 ## 1.2.0 - 2026-03-23
 
