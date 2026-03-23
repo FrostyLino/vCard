@@ -16,8 +16,10 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
             args: --target aarch64-apple-darwin
           - platform: macos-latest
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
             args: --target x86_64-apple-darwin
           - platform: ubuntu-22.04
             args: --bundles appimage
@@ -35,10 +37,15 @@ jobs:
           node-version: lts/*
           cache: npm
 
-      - name: Install Rust stable
+      - name: Install Rust stable for macOS targets
+        if: matrix.platform == 'macos-latest'
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.targets }}
+
+      - name: Install Rust stable
+        if: matrix.platform != 'macos-latest'
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install Linux system dependencies
         if: matrix.platform == 'ubuntu-22.04'
@@ -50,11 +57,12 @@ jobs:
             curl \
             wget \
             file \
-            libxdo-dev \
             libssl-dev \
-            libayatana-appindicator3-dev \
+            libgtk-3-dev \
+            libappindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            libfuse2
 
       - name: Cache Rust artifacts
         uses: swatinem/rust-cache@v2
@@ -64,8 +72,8 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Run tests before packaging
-        run: npm test
+      - name: Run verification before packaging
+        run: npm run verify
 
       - name: Build and publish Tauri bundles
         uses: tauri-apps/tauri-action@v0
