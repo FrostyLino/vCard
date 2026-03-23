@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirm, message } from "@tauri-apps/plugin-dialog";
 import "./App.css";
@@ -2088,6 +2088,82 @@ interface BatchPowerTableProps {
   onUpdateRole: (itemId: string, value: string) => void;
 }
 
+type BatchPowerTableFieldKey =
+  | "formattedName"
+  | "email"
+  | "phone"
+  | "website"
+  | "organization"
+  | "title"
+  | "role";
+
+interface BatchPowerTableFieldColumn {
+  key: BatchPowerTableFieldKey;
+  label: string;
+  placeholder: string;
+  unreadableLabel: string;
+}
+
+const BATCH_POWER_TABLE_FIELD_COLUMNS: BatchPowerTableFieldColumn[] = [
+  {
+    key: "formattedName",
+    label: "Formatted name",
+    placeholder: "Display name",
+    unreadableLabel: "Unreadable file",
+  },
+  {
+    key: "email",
+    label: "Email",
+    placeholder: "name@example.com",
+    unreadableLabel: "—",
+  },
+  {
+    key: "phone",
+    label: "Phone",
+    placeholder: "+49 170 1234567",
+    unreadableLabel: "—",
+  },
+  {
+    key: "website",
+    label: "Website",
+    placeholder: "https://example.com",
+    unreadableLabel: "—",
+  },
+  {
+    key: "organization",
+    label: "Organization",
+    placeholder: "Organization; Unit",
+    unreadableLabel: "—",
+  },
+  {
+    key: "title",
+    label: "Title",
+    placeholder: "Title",
+    unreadableLabel: "—",
+  },
+  {
+    key: "role",
+    label: "Role",
+    placeholder: "Role",
+    unreadableLabel: "—",
+  },
+];
+
+interface BatchPowerTableRowProps {
+  item: BatchItem;
+  isSelected: boolean;
+  onSelectRow: (itemId: string) => void;
+  onToggleSelection: (itemId: string, checked: boolean) => void;
+  onEnsureSelection: (itemId: string) => void;
+  onUpdateFormattedName: (itemId: string, value: string) => void;
+  onUpdateOrganization: (itemId: string, value: string) => void;
+  onUpdateEmail: (itemId: string, value: string) => void;
+  onUpdatePhone: (itemId: string, value: string) => void;
+  onUpdateUrl: (itemId: string, value: string) => void;
+  onUpdateTitle: (itemId: string, value: string) => void;
+  onUpdateRole: (itemId: string, value: string) => void;
+}
+
 function BatchPowerTable({
   items,
   selectedIds,
@@ -2108,176 +2184,125 @@ function BatchPowerTable({
         <tr>
           <th>Select</th>
           <th>File</th>
-          <th>Formatted name</th>
-          <th>Email</th>
-          <th>Phone</th>
-          <th>Website</th>
-          <th>Organization</th>
-          <th>Title</th>
-          <th>Role</th>
+          {BATCH_POWER_TABLE_FIELD_COLUMNS.map((column) => (
+            <th key={column.key}>{column.label}</th>
+          ))}
           <th>Status</th>
         </tr>
       </thead>
       <tbody>
-        {items.map((item) => {
-          const document = item.document;
-          const itemIssues = getBatchItemValidationIssues(item);
-          const isSelected = selectedIds.includes(item.id);
-          const pathLabel = getPathLabel(item.sourcePath);
-          const primaryEmail = getPrimaryContactValue(document?.emails ?? []);
-          const primaryPhone = getPrimaryContactValue(document?.phones ?? []);
-          const primaryUrl = getPrimaryContactValue(document?.urls ?? []);
-
-          return (
-            <tr
-              key={item.id}
-              className={isSelected ? "batch-table__row batch-table__row--selected" : "batch-table__row"}
-              onClick={() => {
-                if (!document) {
-                  return;
-                }
-
-                onSelectRow(item.id);
-              }}
-            >
-              <td>
-                <input
-                  type="checkbox"
-                  checked={isSelected}
-                  disabled={!document}
-                  onClick={(event) => event.stopPropagation()}
-                  onChange={(event) => {
-                    event.stopPropagation();
-
-                    if (!document) {
-                      return;
-                    }
-
-                    onToggleSelection(item.id, event.currentTarget.checked);
-                  }}
-                />
-              </td>
-              <td>{pathLabel}</td>
-              <td>
-                {document ? (
-                  <input
-                    className="table-input"
-                    value={document.formattedName}
-                    aria-label={`Formatted name for ${pathLabel}`}
-                    placeholder="Display name"
-                    onClick={(event) => event.stopPropagation()}
-                    onFocus={() => onEnsureSelection(item.id)}
-                    onChange={(event) => onUpdateFormattedName(item.id, event.currentTarget.value)}
-                  />
-                ) : (
-                  "Unreadable file"
-                )}
-              </td>
-              <td>
-                {document ? (
-                  <input
-                    className="table-input"
-                    value={primaryEmail?.value ?? ""}
-                    aria-label={`Email for ${pathLabel}`}
-                    placeholder="name@example.com"
-                    onClick={(event) => event.stopPropagation()}
-                    onFocus={() => onEnsureSelection(item.id)}
-                    onChange={(event) => onUpdateEmail(item.id, event.currentTarget.value)}
-                  />
-                ) : (
-                  "—"
-                )}
-              </td>
-              <td>
-                {document ? (
-                  <input
-                    className="table-input"
-                    value={primaryPhone?.value ?? ""}
-                    aria-label={`Phone for ${pathLabel}`}
-                    placeholder="+49 170 1234567"
-                    onClick={(event) => event.stopPropagation()}
-                    onFocus={() => onEnsureSelection(item.id)}
-                    onChange={(event) => onUpdatePhone(item.id, event.currentTarget.value)}
-                  />
-                ) : (
-                  "—"
-                )}
-              </td>
-              <td>
-                {document ? (
-                  <input
-                    className="table-input"
-                    value={primaryUrl?.value ?? ""}
-                    aria-label={`Website for ${pathLabel}`}
-                    placeholder="https://example.com"
-                    onClick={(event) => event.stopPropagation()}
-                    onFocus={() => onEnsureSelection(item.id)}
-                    onChange={(event) => onUpdateUrl(item.id, event.currentTarget.value)}
-                  />
-                ) : (
-                  "—"
-                )}
-              </td>
-              <td>
-                {document ? (
-                  <input
-                    className="table-input"
-                    value={document.organizationUnits.join("; ")}
-                    aria-label={`Organization for ${pathLabel}`}
-                    placeholder="Organization; Unit"
-                    onClick={(event) => event.stopPropagation()}
-                    onFocus={() => onEnsureSelection(item.id)}
-                    onChange={(event) => onUpdateOrganization(item.id, event.currentTarget.value)}
-                  />
-                ) : (
-                  "—"
-                )}
-              </td>
-              <td>
-                {document ? (
-                  <input
-                    className="table-input"
-                    value={document.title}
-                    aria-label={`Title for ${pathLabel}`}
-                    placeholder="Title"
-                    onClick={(event) => event.stopPropagation()}
-                    onFocus={() => onEnsureSelection(item.id)}
-                    onChange={(event) => onUpdateTitle(item.id, event.currentTarget.value)}
-                  />
-                ) : (
-                  "—"
-                )}
-              </td>
-              <td>
-                {document ? (
-                  <input
-                    className="table-input"
-                    value={document.role}
-                    aria-label={`Role for ${pathLabel}`}
-                    placeholder="Role"
-                    onClick={(event) => event.stopPropagation()}
-                    onFocus={() => onEnsureSelection(item.id)}
-                    onChange={(event) => onUpdateRole(item.id, event.currentTarget.value)}
-                  />
-                ) : (
-                  "—"
-                )}
-              </td>
-              <td>
-                <div className="batch-status-cell">
-                  <span className={`status-pill${item.status === "failed" ? " status-pill--warning" : ""}`}>
-                    {item.status}
-                  </span>
-                  <span className="batch-status-text">{getBatchItemStatusText(item, itemIssues)}</span>
-                </div>
-              </td>
-            </tr>
-          );
-        })}
+        {items.map((item) => (
+          <BatchPowerTableRow
+            key={item.id}
+            item={item}
+            isSelected={selectedIds.includes(item.id)}
+            onSelectRow={onSelectRow}
+            onToggleSelection={onToggleSelection}
+            onEnsureSelection={onEnsureSelection}
+            onUpdateFormattedName={onUpdateFormattedName}
+            onUpdateOrganization={onUpdateOrganization}
+            onUpdateEmail={onUpdateEmail}
+            onUpdatePhone={onUpdatePhone}
+            onUpdateUrl={onUpdateUrl}
+            onUpdateTitle={onUpdateTitle}
+            onUpdateRole={onUpdateRole}
+          />
+        ))}
       </tbody>
     </table>
   );
 }
+
+const BatchPowerTableRow = memo(
+  function BatchPowerTableRow({
+    item,
+    isSelected,
+    onSelectRow,
+    onToggleSelection,
+    onEnsureSelection,
+    onUpdateFormattedName,
+    onUpdateOrganization,
+    onUpdateEmail,
+    onUpdatePhone,
+    onUpdateUrl,
+    onUpdateTitle,
+    onUpdateRole,
+  }: BatchPowerTableRowProps) {
+    const document = item.document;
+    const itemIssues = getBatchItemValidationIssues(item);
+    const pathLabel = getPathLabel(item.sourcePath);
+    const updateField = getBatchPowerTableFieldUpdater({
+      onUpdateFormattedName,
+      onUpdateOrganization,
+      onUpdateEmail,
+      onUpdatePhone,
+      onUpdateUrl,
+      onUpdateTitle,
+      onUpdateRole,
+    });
+
+    return (
+      <tr
+        className={isSelected ? "batch-table__row batch-table__row--selected" : "batch-table__row"}
+        onClick={() => {
+          if (!document) {
+            return;
+          }
+
+          onSelectRow(item.id);
+        }}
+      >
+        <td>
+          <input
+            type="checkbox"
+            checked={isSelected}
+            disabled={!document}
+            onClick={(event) => event.stopPropagation()}
+            onChange={(event) => {
+              event.stopPropagation();
+
+              if (!document) {
+                return;
+              }
+
+              onToggleSelection(item.id, event.currentTarget.checked);
+            }}
+          />
+        </td>
+        <td>{pathLabel}</td>
+        {BATCH_POWER_TABLE_FIELD_COLUMNS.map((column) => (
+          <td key={column.key}>
+            {document ? (
+              <input
+                className="table-input"
+                value={getBatchPowerTableFieldValue(document, column.key)}
+                aria-label={`${column.label} for ${pathLabel}`}
+                placeholder={column.placeholder}
+                onClick={(event) => event.stopPropagation()}
+                onFocus={() => onEnsureSelection(item.id)}
+                onChange={(event) =>
+                  updateField(column.key, item.id, event.currentTarget.value)
+                }
+              />
+            ) : (
+              column.unreadableLabel
+            )}
+          </td>
+        ))}
+        <td>
+          <div className="batch-status-cell">
+            <span className={`status-pill${item.status === "failed" ? " status-pill--warning" : ""}`}>
+              {item.status}
+            </span>
+            <span className="batch-status-text">{getBatchItemStatusText(item, itemIssues)}</span>
+          </div>
+        </td>
+      </tr>
+    );
+  },
+  (previousProps, nextProps) =>
+    previousProps.item === nextProps.item && previousProps.isSelected === nextProps.isSelected,
+);
 
 function BatchCreatorPanel({
   creator,
@@ -2732,6 +2757,64 @@ function moveItem<T>(items: T[], index: number, direction: -1 | 1): T[] {
   const [item] = nextItems.splice(index, 1);
   nextItems.splice(nextIndex, 0, item);
   return nextItems;
+}
+
+function getBatchPowerTableFieldValue(
+  document: VCardDocument,
+  key: BatchPowerTableFieldKey,
+): string {
+  switch (key) {
+    case "formattedName":
+      return document.formattedName;
+    case "email":
+      return getPrimaryContactValue(document.emails)?.value ?? "";
+    case "phone":
+      return getPrimaryContactValue(document.phones)?.value ?? "";
+    case "website":
+      return getPrimaryContactValue(document.urls)?.value ?? "";
+    case "organization":
+      return document.organizationUnits.join("; ");
+    case "title":
+      return document.title;
+    case "role":
+      return document.role;
+  }
+}
+
+function getBatchPowerTableFieldUpdater(handlers: {
+  onUpdateFormattedName: (itemId: string, value: string) => void;
+  onUpdateOrganization: (itemId: string, value: string) => void;
+  onUpdateEmail: (itemId: string, value: string) => void;
+  onUpdatePhone: (itemId: string, value: string) => void;
+  onUpdateUrl: (itemId: string, value: string) => void;
+  onUpdateTitle: (itemId: string, value: string) => void;
+  onUpdateRole: (itemId: string, value: string) => void;
+}) {
+  return (key: BatchPowerTableFieldKey, itemId: string, value: string) => {
+    switch (key) {
+      case "formattedName":
+        handlers.onUpdateFormattedName(itemId, value);
+        return;
+      case "email":
+        handlers.onUpdateEmail(itemId, value);
+        return;
+      case "phone":
+        handlers.onUpdatePhone(itemId, value);
+        return;
+      case "website":
+        handlers.onUpdateUrl(itemId, value);
+        return;
+      case "organization":
+        handlers.onUpdateOrganization(itemId, value);
+        return;
+      case "title":
+        handlers.onUpdateTitle(itemId, value);
+        return;
+      case "role":
+        handlers.onUpdateRole(itemId, value);
+        return;
+    }
+  };
 }
 
 function getPrimaryContactValue(values: ContactValue[]): ContactValue | null {
