@@ -567,6 +567,152 @@ describe("App", () => {
     expect(screen.getByLabelText(/role for mapped\.vcf/i)).toHaveValue("Operations");
   });
 
+  it("prefers preferred contact values in the power table when multiple entries exist", async () => {
+    openManyVcfMock.mockResolvedValue(["/tmp/preferred.vcf"]);
+    readVcfFileMock.mockResolvedValue(
+      createVcf([
+        "BEGIN:VCARD",
+        "VERSION:4.0",
+        "FN:Preferred Person",
+        "EMAIL;PREF=2:secondary@example.com",
+        "EMAIL;PREF=1:primary@example.com",
+        "TEL;PREF=2:+49 30 111111",
+        "TEL;PREF=1:+49 30 222222",
+        "URL;PREF=2:https://secondary.example.com",
+        "URL;PREF=1:https://primary.example.com",
+        "END:VCARD",
+      ]),
+    );
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^batch$/i }));
+    expect(await screen.findByTestId("batch-workspace")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /add files/i }));
+    expect(await screen.findByText("Preferred Person")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: /power user table/i }));
+
+    expect(screen.getByLabelText(/email for preferred\.vcf/i)).toHaveValue("primary@example.com");
+    expect(screen.getByLabelText(/phone for preferred\.vcf/i)).toHaveValue("+49 30 222222");
+    expect(screen.getByLabelText(/website for preferred\.vcf/i)).toHaveValue(
+      "https://primary.example.com",
+    );
+  });
+
+  it("removes cleared primary contact values from the power table on apply", async () => {
+    openManyVcfMock.mockResolvedValue(["/tmp/clearable.vcf"]);
+    readVcfFileMock.mockResolvedValue(
+      createVcf([
+        "BEGIN:VCARD",
+        "VERSION:4.0",
+        "FN:Clearable Person",
+        "UID:urn:uuid:clearable",
+        "REV:2026-03-20T08:00:00Z",
+        "PRODID:-//vCard Editor//EN",
+        "EMAIL:clear@example.com",
+        "TEL:+49 30 333333",
+        "URL:https://clear.example.com",
+        "END:VCARD",
+      ]),
+    );
+    writeVcfFileMock.mockResolvedValue(undefined);
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^batch$/i }));
+    expect(await screen.findByTestId("batch-workspace")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /add files/i }));
+    expect(await screen.findByText("Clearable Person")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: /power user table/i }));
+
+    fireEvent.change(screen.getByLabelText(/email for clearable\.vcf/i), {
+      target: { value: "" },
+    });
+    fireEvent.change(screen.getByLabelText(/website for clearable\.vcf/i), {
+      target: { value: "" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /preview apply/i }));
+    expect(await screen.findByText(/preview prepared for 1 file\(s\)\./i)).toBeInTheDocument();
+    expect(screen.getByText(/will update clearable\.vcf in place\./i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /apply changes/i }));
+
+    await waitFor(() => {
+      expect(writeVcfFileMock).toHaveBeenCalledTimes(2);
+    });
+
+    const targetWrite = writeVcfFileMock.mock.calls.find(
+      ([path]) => String(path) === "/tmp/clearable.vcf",
+    )?.[1];
+
+    expect(targetWrite).toBeDefined();
+    expect(targetWrite).not.toContain("EMAIL:");
+    expect(targetWrite).not.toContain("URL:");
+    expect(targetWrite).toContain("TEL:+49 30 333333");
+  });
+
+  it("creates missing contact values and selects the focused row in the power table", async () => {
+    openManyVcfMock.mockResolvedValue(["/tmp/a.vcf", "/tmp/b.vcf"]);
+    readVcfFileMock.mockImplementation(async (path: string) =>
+      path.endsWith("a.vcf")
+        ? createVcf([
+            "BEGIN:VCARD",
+            "VERSION:4.0",
+            "FN:Alice Example",
+            "UID:urn:uuid:alice",
+            "REV:2026-03-20T08:00:00Z",
+            "PRODID:-//vCard Editor//EN",
+            "END:VCARD",
+          ])
+        : createVcf([
+            "BEGIN:VCARD",
+            "VERSION:4.0",
+            "FN:Bob Example",
+            "UID:urn:uuid:bob",
+            "REV:2026-03-20T08:00:00Z",
+            "PRODID:-//vCard Editor//EN",
+            "END:VCARD",
+          ]),
+    );
+    writeVcfFileMock.mockResolvedValue(undefined);
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^batch$/i }));
+    expect(await screen.findByTestId("batch-workspace")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /add files/i }));
+    expect(await screen.findByText("Alice Example")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: /power user table/i }));
+
+    const bobEmailInput = screen.getByLabelText(/email for b\.vcf/i);
+    fireEvent.focus(bobEmailInput);
+    fireEvent.change(bobEmailInput, {
+      target: { value: "bob@new.test" },
+    });
+
+    expect(screen.getByText(/2 visible \/ 2 selected/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /preview apply/i }));
+    expect(await screen.findByText(/preview prepared for 1 file\(s\)\./i)).toBeInTheDocument();
+    expect(screen.getByText(/will update b\.vcf in place\./i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /apply changes/i }));
+
+    await waitFor(() => {
+      expect(writeVcfFileMock).toHaveBeenCalledTimes(2);
+    });
+
+    const targetWrite = writeVcfFileMock.mock.calls.find(([path]) => String(path) === "/tmp/b.vcf")
+      ?.[1];
+
+    expect(targetWrite).toBeDefined();
+    expect(targetWrite).toContain("EMAIL:bob@new.test");
+  });
+
   it("supports inline multi-editing in the batch power table", async () => {
     openManyVcfMock.mockResolvedValue(["/tmp/a.vcf", "/tmp/b.vcf"]);
     readVcfFileMock.mockImplementation(async (path: string) =>
