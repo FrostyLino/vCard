@@ -530,6 +530,43 @@ describe("App", () => {
     ).toBeInTheDocument();
   });
 
+  it("maps imported values into the correct power table columns", async () => {
+    openManyVcfMock.mockResolvedValue(["/tmp/mapped.vcf"]);
+    readVcfFileMock.mockResolvedValue(
+      createVcf([
+        "BEGIN:VCARD",
+        "VERSION:4.0",
+        "FN:Mapped Person",
+        "EMAIL:mapped@example.com",
+        "TEL:+49 30 123456",
+        "URL:https://mapped.example.com",
+        "ORG:Northwind",
+        "TITLE:Manager",
+        "ROLE:Operations",
+        "END:VCARD",
+      ]),
+    );
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("tab", { name: /^batch$/i }));
+    expect(await screen.findByTestId("batch-workspace")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /add files/i }));
+    expect(await screen.findByText("Mapped Person")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("tab", { name: /power user table/i }));
+
+    expect(screen.getByLabelText(/formatted name for mapped\.vcf/i)).toHaveValue("Mapped Person");
+    expect(screen.getByLabelText(/email for mapped\.vcf/i)).toHaveValue("mapped@example.com");
+    expect(screen.getByLabelText(/phone for mapped\.vcf/i)).toHaveValue("+49 30 123456");
+    expect(screen.getByLabelText(/website for mapped\.vcf/i)).toHaveValue(
+      "https://mapped.example.com",
+    );
+    expect(screen.getByLabelText(/organization for mapped\.vcf/i)).toHaveValue("Northwind");
+    expect(screen.getByLabelText(/title for mapped\.vcf/i)).toHaveValue("Manager");
+    expect(screen.getByLabelText(/role for mapped\.vcf/i)).toHaveValue("Operations");
+  });
+
   it("supports inline multi-editing in the batch power table", async () => {
     openManyVcfMock.mockResolvedValue(["/tmp/a.vcf", "/tmp/b.vcf"]);
     readVcfFileMock.mockImplementation(async (path: string) =>

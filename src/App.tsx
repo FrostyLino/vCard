@@ -2162,6 +2162,21 @@ function BatchPowerTable({
                 {document ? (
                   <input
                     className="table-input"
+                    value={document.formattedName}
+                    aria-label={`Formatted name for ${pathLabel}`}
+                    placeholder="Display name"
+                    onClick={(event) => event.stopPropagation()}
+                    onFocus={() => onEnsureSelection(item.id)}
+                    onChange={(event) => onUpdateFormattedName(item.id, event.currentTarget.value)}
+                  />
+                ) : (
+                  "Unreadable file"
+                )}
+              </td>
+              <td>
+                {document ? (
+                  <input
+                    className="table-input"
                     value={primaryEmail?.value ?? ""}
                     aria-label={`Email for ${pathLabel}`}
                     placeholder="name@example.com"
@@ -2201,21 +2216,6 @@ function BatchPowerTable({
                   />
                 ) : (
                   "—"
-                )}
-              </td>
-              <td>
-                {document ? (
-                  <input
-                    className="table-input"
-                    value={document.formattedName}
-                    aria-label={`Formatted name for ${pathLabel}`}
-                    placeholder="Display name"
-                    onClick={(event) => event.stopPropagation()}
-                    onFocus={() => onEnsureSelection(item.id)}
-                    onChange={(event) => onUpdateFormattedName(item.id, event.currentTarget.value)}
-                  />
-                ) : (
-                  "Unreadable file"
                 )}
               </td>
               <td>
