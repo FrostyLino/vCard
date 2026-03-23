@@ -23,6 +23,9 @@ jobs:
             args: --target x86_64-apple-darwin
           - platform: ubuntu-22.04
             args: --bundles appimage
+          - platform: windows-latest
+            targets: x86_64-pc-windows-msvc
+            args: --target x86_64-pc-windows-msvc --bundles nsis
 
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 45
@@ -43,8 +46,14 @@ jobs:
         with:
           targets: ${{ matrix.targets }}
 
+      - name: Install Rust stable for Windows target
+        if: matrix.platform == 'windows-latest'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.targets }}
+
       - name: Install Rust stable
-        if: matrix.platform != 'macos-latest'
+        if: matrix.platform != 'macos-latest' && matrix.platform != 'windows-latest'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install Linux system dependencies
@@ -82,7 +91,7 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: vCard Editor v__VERSION__
-          releaseBody: Release v__VERSION__ of vCard Editor. Download the macOS bundles or Ubuntu AppImage below. See the changelog and README for feature and workflow details. Current macOS builds are unsigned and not notarized.
+          releaseBody: Release v__VERSION__ of vCard Editor. Download the macOS bundles, Ubuntu AppImage, or Windows NSIS installer below. See the changelog and README for feature and workflow details. Current macOS builds and Windows installers are unsigned, so Gatekeeper or SmartScreen warnings may still appear.
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
