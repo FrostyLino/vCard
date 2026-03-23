@@ -1,6 +1,6 @@
 # Linux Release Checklist
 
-Use this checklist before merging Linux support into `main` or shipping a release that includes the Ubuntu AppImage artifact.
+Use this checklist before merging Linux support into `main` or shipping a release that includes the Ubuntu 22.04 AppImage artifact.
 
 ## Automated Gate
 
@@ -8,9 +8,9 @@ Use this checklist before merging Linux support into `main` or shipping a releas
 - Confirm CI passes on both `macos-latest` and `ubuntu-22.04`.
 - Confirm the release workflow includes a Linux `AppImage` job.
 
-## Ubuntu Smoke Run
+## Ubuntu 22.04 Smoke Run
 
-Run these checks on Ubuntu with the built AppImage or through `npm run tauri dev`.
+Run these checks on Ubuntu 22.04 with the built AppImage or through `npm run tauri dev`.
 
 1. Startup:
    - Launch the app successfully.
@@ -51,5 +51,5 @@ Run these checks on Ubuntu with the built AppImage or through `npm run tauri dev
 ## Merge Gate
 
 - No Linux-specific file access or packaging issues remain.
-- The Ubuntu smoke run covers single, batch, export and backup flows.
+- The Ubuntu 22.04 smoke run covers single, batch, export and backup flows.
 - The AppImage artifact is present in the release workflow output.

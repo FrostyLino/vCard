@@ -4,10 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
-- Added Ubuntu CI verification alongside the existing macOS checks.
-- Added Ubuntu AppImage packaging to the tag-driven GitHub release workflow.
-- Added Linux production documentation and a dedicated Ubuntu smoke checklist.
-- Updated product metadata and support documentation from macOS-only wording to macOS plus Ubuntu.
+- Added Ubuntu 22.04 CI verification alongside the existing macOS checks.
+- Added Ubuntu 22.04 AppImage packaging to the tag-driven GitHub release workflow.
+- Added Linux production documentation and a dedicated Ubuntu 22.04 smoke checklist.
+- Updated product metadata and support documentation from macOS-only wording to macOS plus Ubuntu 22.04.
 
 ## 1.1.0 - 2026-03-23
 
