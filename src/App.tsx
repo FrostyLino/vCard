@@ -121,6 +121,10 @@ function App() {
     () => visibleBatchItems.filter((item) => Boolean(item.document)),
     [visibleBatchItems],
   );
+  const visibleBatchTableRows = useMemo(
+    () => visibleBatchItems.map((item) => buildBatchTableRowData(item)),
+    [visibleBatchItems],
+  );
   const visibleValidBatchIds = useMemo(
     () => visibleValidBatchItems.map((item) => item.id),
     [visibleValidBatchItems],
@@ -1248,7 +1252,7 @@ function App() {
                   {batchViewMode === "power-table" ? (
                     <div className="batch-table-scroll">
                       <BatchPowerTable
-                        items={visibleBatchItems}
+                        rows={visibleBatchTableRows}
                         selectedIdSet={selectedIdSet}
                         onSelectRow={selectOnlyBatchItem}
                         onToggleSelection={setBatchItemSelection}
@@ -1289,9 +1293,8 @@ function App() {
                           </tr>
                         </thead>
                         <tbody>
-                          {visibleBatchItems.map((item) => {
-                            const document = item.document;
-                            const itemIssues = getBatchItemValidationIssues(item);
+                          {visibleBatchTableRows.map((row) => {
+                            const { item, hasDocument, pathLabel, statusText, fieldValues } = row;
                             const isSelected = selectedIdSet.has(item.id);
 
                             return (
@@ -1303,7 +1306,7 @@ function App() {
                                     : "batch-table__row"
                                 }
                                 onClick={() => {
-                                  if (!document) {
+                                  if (!hasDocument) {
                                     return;
                                   }
 
@@ -1314,11 +1317,11 @@ function App() {
                                   <input
                                     type="checkbox"
                                     checked={isSelected}
-                                    disabled={!document}
+                                    disabled={!hasDocument}
                                     onChange={(event) => {
                                       event.stopPropagation();
 
-                                      if (!document) {
+                                      if (!hasDocument) {
                                         return;
                                       }
 
@@ -1326,11 +1329,11 @@ function App() {
                                     }}
                                   />
                                 </td>
-                                <td>{getPathLabel(item.sourcePath)}</td>
-                                <td>{document?.formattedName || "Unreadable file"}</td>
-                                <td>{document?.organizationUnits.join("; ") || "—"}</td>
-                                <td>{document?.title || "—"}</td>
-                                <td>{document?.role || "—"}</td>
+                                <td>{pathLabel}</td>
+                                <td>{hasDocument ? fieldValues.formattedName : "Unreadable file"}</td>
+                                <td>{hasDocument ? fieldValues.organization || "—" : "—"}</td>
+                                <td>{hasDocument ? fieldValues.title || "—" : "—"}</td>
+                                <td>{hasDocument ? fieldValues.role || "—" : "—"}</td>
                                 <td>
                                   <div className="batch-status-cell">
                                     <span
@@ -1338,9 +1341,7 @@ function App() {
                                     >
                                       {item.status}
                                     </span>
-                                    <span className="batch-status-text">
-                                      {getBatchItemStatusText(item, itemIssues)}
-                                    </span>
+                                    <span className="batch-status-text">{statusText}</span>
                                   </div>
                                 </td>
                               </tr>
@@ -2090,7 +2091,7 @@ interface BatchCreatorPanelProps {
 }
 
 interface BatchPowerTableProps {
-  items: BatchItem[];
+  rows: BatchTableRowData[];
   selectedIdSet: ReadonlySet<string>;
   onSelectRow: (itemId: string) => void;
   onToggleSelection: (itemId: string, checked: boolean) => void;
@@ -2118,6 +2119,14 @@ interface BatchPowerTableFieldColumn {
   label: string;
   placeholder: string;
   unreadableLabel: string;
+}
+
+interface BatchTableRowData {
+  item: BatchItem;
+  hasDocument: boolean;
+  pathLabel: string;
+  statusText: string;
+  fieldValues: Record<BatchPowerTableFieldKey, string>;
 }
 
 const BATCH_POWER_TABLE_FIELD_COLUMNS: BatchPowerTableFieldColumn[] = [
@@ -2166,7 +2175,7 @@ const BATCH_POWER_TABLE_FIELD_COLUMNS: BatchPowerTableFieldColumn[] = [
 ];
 
 interface BatchPowerTableRowProps {
-  item: BatchItem;
+  row: BatchTableRowData;
   isSelected: boolean;
   onSelectRow: (itemId: string) => void;
   onToggleSelection: (itemId: string, checked: boolean) => void;
@@ -2181,7 +2190,7 @@ interface BatchPowerTableRowProps {
 }
 
 function BatchPowerTable({
-  items,
+  rows,
   selectedIdSet,
   onSelectRow,
   onToggleSelection,
@@ -2207,11 +2216,11 @@ function BatchPowerTable({
         </tr>
       </thead>
       <tbody>
-        {items.map((item) => (
+        {rows.map((row) => (
           <BatchPowerTableRow
-            key={item.id}
-            item={item}
-            isSelected={selectedIdSet.has(item.id)}
+            key={row.item.id}
+            row={row}
+            isSelected={selectedIdSet.has(row.item.id)}
             onSelectRow={onSelectRow}
             onToggleSelection={onToggleSelection}
             onEnsureSelection={onEnsureSelection}
@@ -2231,7 +2240,7 @@ function BatchPowerTable({
 
 const BatchPowerTableRow = memo(
   function BatchPowerTableRow({
-    item,
+    row,
     isSelected,
     onSelectRow,
     onToggleSelection,
@@ -2244,9 +2253,7 @@ const BatchPowerTableRow = memo(
     onUpdateTitle,
     onUpdateRole,
   }: BatchPowerTableRowProps) {
-    const document = item.document;
-    const itemIssues = getBatchItemValidationIssues(item);
-    const pathLabel = getPathLabel(item.sourcePath);
+    const { item, hasDocument, pathLabel, statusText, fieldValues } = row;
     const updateField = getBatchPowerTableFieldUpdater({
       onUpdateFormattedName,
       onUpdateOrganization,
@@ -2261,7 +2268,7 @@ const BatchPowerTableRow = memo(
       <tr
         className={isSelected ? "batch-table__row batch-table__row--selected" : "batch-table__row"}
         onClick={() => {
-          if (!document) {
+          if (!hasDocument) {
             return;
           }
 
@@ -2272,12 +2279,12 @@ const BatchPowerTableRow = memo(
           <input
             type="checkbox"
             checked={isSelected}
-            disabled={!document}
+            disabled={!hasDocument}
             onClick={(event) => event.stopPropagation()}
             onChange={(event) => {
               event.stopPropagation();
 
-              if (!document) {
+              if (!hasDocument) {
                 return;
               }
 
@@ -2288,10 +2295,10 @@ const BatchPowerTableRow = memo(
         <td>{pathLabel}</td>
         {BATCH_POWER_TABLE_FIELD_COLUMNS.map((column) => (
           <td key={column.key}>
-            {document ? (
+            {hasDocument ? (
               <input
                 className="table-input"
-                value={getBatchPowerTableFieldValue(document, column.key)}
+                value={fieldValues[column.key]}
                 aria-label={`${column.label} for ${pathLabel}`}
                 placeholder={column.placeholder}
                 onClick={(event) => event.stopPropagation()}
@@ -2310,14 +2317,14 @@ const BatchPowerTableRow = memo(
             <span className={`status-pill${item.status === "failed" ? " status-pill--warning" : ""}`}>
               {item.status}
             </span>
-            <span className="batch-status-text">{getBatchItemStatusText(item, itemIssues)}</span>
+            <span className="batch-status-text">{statusText}</span>
           </div>
         </td>
       </tr>
     );
   },
   (previousProps, nextProps) =>
-    previousProps.item === nextProps.item && previousProps.isSelected === nextProps.isSelected,
+    previousProps.row === nextProps.row && previousProps.isSelected === nextProps.isSelected,
 );
 
 function BatchCreatorPanel({
@@ -2830,6 +2837,27 @@ function getBatchPowerTableFieldUpdater(handlers: {
         handlers.onUpdateRole(itemId, value);
         return;
     }
+  };
+}
+
+function buildBatchTableRowData(item: BatchItem): BatchTableRowData {
+  const issues = getBatchItemValidationIssues(item);
+  const document = item.document;
+
+  return {
+    item,
+    hasDocument: Boolean(document),
+    pathLabel: getPathLabel(item.sourcePath),
+    statusText: getBatchItemStatusText(item, issues),
+    fieldValues: {
+      formattedName: document ? getBatchPowerTableFieldValue(document, "formattedName") : "",
+      email: document ? getBatchPowerTableFieldValue(document, "email") : "",
+      phone: document ? getBatchPowerTableFieldValue(document, "phone") : "",
+      website: document ? getBatchPowerTableFieldValue(document, "website") : "",
+      organization: document ? getBatchPowerTableFieldValue(document, "organization") : "",
+      title: document ? getBatchPowerTableFieldValue(document, "title") : "",
+      role: document ? getBatchPowerTableFieldValue(document, "role") : "",
+    },
   };
 }
 
